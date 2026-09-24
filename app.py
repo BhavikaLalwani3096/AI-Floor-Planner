@@ -13,15 +13,25 @@ from visualizer_2d import render_2d_blueprint
 st.set_page_config(page_title="Spatial Studio", layout="wide", page_icon="🏛️")
 
 # Clean, distraction-free styling
+# Replace the CSS in app.py with this:
 st.markdown("""
     <style>
     .block-container { 
-        padding-top: 1.2rem; 
+        padding-top: 2rem; 
         padding-bottom: 1rem; 
         padding-left: 2rem;
         padding-right: 2rem;
     }
-    header[data-testid="stHeader"] { visibility: hidden; }
+    /* Keep the header transparent so the sidebar toggle arrow remains visible */
+    header[data-testid="stHeader"] {
+        background-color: transparent !important;
+    }
+    /* Ensure the sidebar toggle button is always visible and accessible */
+    [data-testid="stSidebarCollapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+        color: #0F172A !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
