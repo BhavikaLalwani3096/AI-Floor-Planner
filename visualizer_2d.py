@@ -1,6 +1,5 @@
 """
-visualizer_2d.py - 2D Architectural Blueprint Floor Plan using Matplotlib.
-Draws precise walls, dynamic door swing arcs, clearance zones, and fixture dimensions.
+visualizer_2d.py - Universal 2D Blueprint rendering for all door walls and types.
 """
 
 import matplotlib.pyplot as plt
@@ -13,102 +12,76 @@ def render_2d_blueprint(design_solution: Dict[str, Any],
                         room_w: float, 
                         room_l: float, 
                         door: Door) -> plt.Figure:
-    """
-    Renders an architectural blueprint plan with clearance buffer envelopes
-    and door swing physics.
-    """
-    fig, ax = plt.subplots(figsize=(7, 7), dpi=100)
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=100)
 
-    # 1. Room Boundary Walls
-    ax.plot([0, room_w, room_w, 0, 0], [0, 0, room_l, room_l, 0], color="#111827", linewidth=3)
-    ax.fill([0, room_w, room_w, 0], [0, 0, room_l, room_l], color="#F9FAFB")
+    # 1. Floor & Boundary Walls
+    ax.plot([0, room_w, room_w, 0, 0], [0, 0, room_l, room_l, 0], color="#0F172A", linewidth=3)
+    ax.fill([0, room_w, room_w, 0], [0, 0, room_l, room_l], color="#F8FAFC")
 
-    # 2. Door Visualization
-    if door.wall == "south":
-        d_x = door.offset
-        d_y = 0.0
-        d_w = door.width
+    # 2. Universal Door Rendering across all 4 walls
+    dw = door.width
+    do = door.offset
+    wall = door.wall
 
-        # Clear the opening wall segment
-        ax.plot([d_x, d_x + d_w], [0, 0], color="#F9FAFB", linewidth=4)
-
+    if wall == "south":
+        p_door = (do, 0.0)
+        ax.plot([do, do + dw], [0, 0], color="#F8FAFC", linewidth=4)  # Gap
         if door.door_type == "swing_inward":
-            # Door Leaf
-            ax.plot([d_x, d_x], [0, d_w], color="#2563EB", linewidth=2.5)
-            # Door Swing Arc
-            arc = patches.Arc((d_x, 0), d_w * 2, d_w * 2, angle=0, theta1=0, theta2=90, 
-                              color="#3B82F6", linestyle="--", linewidth=1.5)
-            ax.add_patch(arc)
+            ax.plot([do, do], [0, dw], color="#2563EB", linewidth=2)
+            ax.add_patch(patches.Arc(p_door, dw * 2, dw * 2, angle=0, theta1=0, theta2=90, color="#3B82F6", linestyle="--"))
         elif door.door_type == "sliding":
-            # Sliding track symbol
-            ax.plot([d_x, d_x + d_w], [-0.15, -0.15], color="#10B981", linewidth=3, linestyle="-")
-            ax.text(d_x + (d_w / 2.0), -0.4, "SLIDING TRACK", color="#059669", fontsize=8, ha="center")
+            ax.plot([do, do + dw], [-0.15, -0.15], color="#10B981", linewidth=3)
+    elif wall == "north":
+        p_door = (do, room_l)
+        ax.plot([do, do + dw], [room_l, room_l], color="#F8FAFC", linewidth=4)
+        if door.door_type == "swing_inward":
+            ax.plot([do, do], [room_l, room_l - dw], color="#2563EB", linewidth=2)
+            ax.add_patch(patches.Arc(p_door, dw * 2, dw * 2, angle=0, theta1=270, theta2=360, color="#3B82F6", linestyle="--"))
+        elif door.door_type == "sliding":
+            ax.plot([do, do + dw], [room_l + 0.15, room_l + 0.15], color="#10B981", linewidth=3)
+    elif wall == "west":
+        p_door = (0.0, do)
+        ax.plot([0, 0], [do, do + dw], color="#F8FAFC", linewidth=4)
+        if door.door_type == "swing_inward":
+            ax.plot([0, dw], [do, do], color="#2563EB", linewidth=2)
+            ax.add_patch(patches.Arc(p_door, dw * 2, dw * 2, angle=0, theta1=0, theta2=90, color="#3B82F6", linestyle="--"))
+        elif door.door_type == "sliding":
+            ax.plot([-0.15, -0.15], [do, do + dw], color="#10B981", linewidth=3)
+    elif wall == "east":
+        p_door = (room_w, do)
+        ax.plot([room_w, room_w], [do, do + dw], color="#F8FAFC", linewidth=4)
+        if door.door_type == "swing_inward":
+            ax.plot([room_w - dw, room_w], [do, do], color="#2563EB", linewidth=2)
+            ax.add_patch(patches.Arc(p_door, dw * 2, dw * 2, angle=0, theta1=90, theta2=180, color="#3B82F6", linestyle="--"))
+        elif door.door_type == "sliding":
+            ax.plot([room_w + 0.15, room_w + 0.15], [do, do + dw], color="#10B981", linewidth=3)
 
-    # 3. Fixtures with Clearance Boxes
-    color_map = {
-        "toilet": "#3B82F6",   # Blue
-        "vanity": "#D97706",   # Amber / Wood
-        "shower": "#06B6D4",   # Cyan
-        "faucet": "#4B5563"    # Grey
-    }
+    # 3. Privacy Partition if present
+    part = design_solution.get("partition")
+    if part:
+        ax.add_patch(patches.Rectangle((part["x"], part["y"]), part["dx"], part["dy"],
+                                       linewidth=2, edgecolor="#0284C7", facecolor="#BAE6FD", alpha=0.7))
+        ax.text(part["x"], part["y"], "PRIVACY SCREEN", color="#0369A1", fontsize=6, weight="bold")
 
+    # 4. Placed Fixtures
+    color_map = {"toilet": "#3B82F6", "vanity": "#D97706", "shower": "#06B6D4"}
     for p in design_solution["placed_fixtures"]:
         item = p["item"]
         cat = item["category"]
         if cat == "faucet":
-            continue  # Faucet sits on vanity; avoid cluttering 2D box
+            continue
 
-        x = p["x"]
-        y = p["y"]
-        wall = p["wall"]
+        x, y, wall_str = p["x"], p["y"], p["wall"]
+        w = item["depth"] if "west" in wall_str or "east" in wall_str else item["width"]
+        d = item["width"] if "west" in wall_str or "east" in wall_str else item["depth"]
 
-        if wall in ("south_wall", "north_wall"):
-            w = item["width"]
-            d = item["depth"]
-        else:
-            w = item["depth"]
-            d = item["width"]
+        rect = patches.Rectangle((x, y), w, d, linewidth=1.5, edgecolor="#1E293B", facecolor=color_map.get(cat, "#64748B"), alpha=0.9)
+        ax.add_patch(rect)
+        ax.text(x + w/2.0, y + d/2.0, f"{item['name'][:12]}\n{w:.1f}x{d:.1f}'", color="white", fontsize=7, ha="center", va="center", weight="bold")
 
-        # Activity Clearance Envelope (dashed box)
-        front_buf = item.get("clearance_front", 2.0)
-        c_x, c_y, c_w, c_d = x, y, w, d
-        if wall == "south_wall":
-            c_d += front_buf
-        elif wall == "north_wall":
-            c_y -= front_buf
-            c_d += front_buf
-        elif wall == "west_wall":
-            c_w += front_buf
-        elif wall == "east_wall":
-            c_x -= front_buf
-            c_w += front_buf
-
-        # Draw clearance box
-        clearance_rect = patches.Rectangle(
-            (c_x, c_y), c_w, c_d,
-            linewidth=1, linestyle=":", edgecolor="#9CA3AF", facecolor="#E5E7EB", alpha=0.3
-        )
-        ax.add_patch(clearance_rect)
-
-        # Draw Physical Fixture Footprint
-        color = color_map.get(cat, "#6B7280")
-        fixture_rect = patches.Rectangle(
-            (x, y), w, d,
-            linewidth=1.8, edgecolor="#1F2937", facecolor=color, alpha=0.85
-        )
-        ax.add_patch(fixture_rect)
-
-        # Label inside fixture box
-        ax.text(x + (w / 2.0), y + (d / 2.0), f"{item['name'][:12]}..\n({w:.1f}x{d:.1f}')",
-                color="white", fontsize=7.5, weight="bold", ha="center", va="center")
-
-    # Plot Settings
     ax.set_xlim(-1.0, room_w + 1.0)
     ax.set_ylim(-1.0, room_l + 1.0)
     ax.set_aspect("equal")
     ax.axis("off")
-    ax.set_title(f"Plan View Blueprint - {design_solution['design_id']} ({design_solution['tier']} Tier)", 
-                 fontsize=12, weight="bold", pad=15)
-
     plt.tight_layout()
     return fig

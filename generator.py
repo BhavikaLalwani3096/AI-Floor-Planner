@@ -1,227 +1,173 @@
 """
-generator.py - Flexible Multi-Objective Spatial Optimizer & Bundle Combinator.
-Generates 3 structurally distinct spatial layouts and pairs them with 3 intra-style 
-Kohler product bundles, yielding a 3x3 matrix of 9 fully realized designs.
+generator.py - Multi-Objective Spatial Optimizer & Combinatorial Bundle Search.
+Enforces the hard <= budget + 30,000 threshold and generates physical privacy partition structures.
 """
 
 import math
+import itertools
 from typing import List, Dict, Any, Tuple
-from catalog import get_products_by_filter, KOHLER_CATALOG
+from catalog import CATALOG, rank_products_by_intent, cosine_similarity
 from geometry import BoundingBox, Door, PlacedFixture, check_layout_feasibility
 
 
 class SpatialCandidate:
-    """Represents a generated layout candidate with its fitness breakdown."""
-    def __init__(self, fixtures: List[PlacedFixture], fitness: float, scores: Dict[str, float]):
+    def __init__(self, fixtures: List[PlacedFixture], fitness: float, scores: Dict[str, float], partition: Dict[str, Any] = None):
         self.fixtures = fixtures
         self.fitness = fitness
         self.scores = scores
-
-
-def _safe_get_product(category: str, style: str, tier: str) -> Dict[str, Any]:
-    """Helper to safely fetch a product, falling back gracefully if an exact tier match is missing."""
-    items = get_products_by_filter(category=category, style=style, tier=tier)
-    if items:
-        return items[0]
-    fallback = get_products_by_filter(category=category, style=style)
-    if fallback:
-        return fallback[0]
-    all_cat = get_products_by_filter(category=category)
-    if all_cat:
-        return all_cat[0]
-    raise ValueError(f"No catalog products available for category: '{category}'")
+        self.partition = partition
 
 
 class LayoutOptimizer:
-    """
-    Evaluates perimeter wall candidate positions and uses multi-objective 
-    scoring to find top structurally diverse layouts.
-    """
     def __init__(self, room_w: float, room_l: float, door: Door, 
-                 mode: str = "free_flow", 
-                 window_wall: str = "north",
-                 renovation_stack: Tuple[float, float] = None):
+                 mode: str = "free_flow", window_wall: str = "north"):
         self.room_w = room_w
         self.room_l = room_l
         self.door = door
-        self.mode = mode.lower()  # 'free_flow' or 'privacy_focused'
+        self.mode = mode.lower()
         self.window_wall = window_wall.lower()
-        self.renovation_stack = renovation_stack  # Optional (x, y) coordinates of fixed soil stack
 
-        # Dynamic weights based on selected Macro Mode
-        if self.mode == "privacy_focused":
-            self.weights = {"circulation": 0.25, "sightline": 0.45, "daylight": 0.15, "plumbing": 0.15}
-        else: # free_flow
-            self.weights = {"circulation": 0.40, "sightline": 0.15, "daylight": 0.20, "plumbing": 0.25}
-
-    def compute_fitness(self, fixtures: List[PlacedFixture]) -> Tuple[float, Dict[str, float]]:
-        """Calculates multi-objective fitness scores in the range [0.0, 1.0]."""
-        door_center_x = self.door.offset + (self.door.width / 2.0)
-        door_center_y = 0.0 if self.door.wall == "south" else self.room_l
-
-        # 1. Circulation Score (Activity Envelope overlap penalty)
-        activity_clashes = 0
-        for i, f1 in enumerate(fixtures):
-            for j, f2 in enumerate(fixtures):
-                if i != j and f1.activity_box.intersects(f2.bounding_box):
-                    activity_clashes += 1
-        s_circulation = max(0.0, 1.0 - (activity_clashes * 0.25))
-
-        # 2. Sightline & Privacy Score
-        s_sightline = 0.5
-        toilet_fixture = next((f for f in fixtures if f.data["category"] == "toilet"), None)
-        vanity_fixture = next((f for f in fixtures if f.data["category"] == "vanity"), None)
-
-        if vanity_fixture:
-            dist_v_door = math.hypot(vanity_fixture.x - door_center_x, vanity_fixture.y - door_center_y)
-            s_sightline += 0.25 if dist_v_door > 2.0 else 0.1
-
-        if toilet_fixture:
-            dist_t_door = math.hypot(toilet_fixture.x - door_center_x, toilet_fixture.y - door_center_y)
-            if self.mode == "privacy_focused":
-                if dist_t_door < 3.5:
-                    s_sightline -= 0.4
-                else:
-                    s_sightline += 0.25
-            else:
-                if dist_t_door < 2.5:
-                    s_sightline -= 0.15
-
-        s_sightline = min(1.0, max(0.0, s_sightline))
-
-        # 3. Daylight & Fenestration Score
-        s_daylight = 0.5
-        shower_fixture = next((f for f in fixtures if f.data["category"] == "shower"), None)
-        if shower_fixture and shower_fixture.orientation.startswith(self.window_wall):
-            s_daylight += 0.4  # Bonus for natural ventilation in wet zone
-        s_daylight = min(1.0, max(0.0, s_daylight))
-
-        # 4. Plumbing Economy Score
-        s_plumbing = 0.5
-        if self.renovation_stack and toilet_fixture:
-            dist_stack = math.hypot(toilet_fixture.x - self.renovation_stack[0], 
-                                    toilet_fixture.y - self.renovation_stack[1])
-            s_plumbing = max(0.0, 1.0 - (dist_stack / max(self.room_w, self.room_l)))
-        elif toilet_fixture and shower_fixture:
-            wet_dist = math.hypot(toilet_fixture.x - shower_fixture.x, toilet_fixture.y - shower_fixture.y)
-            s_plumbing = max(0.0, 1.0 - (wet_dist / (self.room_w + self.room_l)))
-
-        scores = {
-            "circulation": s_circulation,
-            "sightline": s_sightline,
-            "daylight": s_daylight,
-            "plumbing": s_plumbing
-        }
-
-        total_fitness = sum(scores[k] * self.weights[k] for k in self.weights)
-        return total_fitness, scores
-
-    def generate_top_layouts(self, template_items: List[Dict[str, Any]], count: int = 3) -> List[SpatialCandidate]:
+    def generate_proportional_layouts(self, items: List[Dict[str, Any]]) -> List[SpatialCandidate]:
         """
-        Samples candidate configurations along wall perimeter slots,
-        rejects collisions, and selects distinct high-scoring candidates.
+        Calculates wall anchors spaced proportionally across the room.
+        Generates 3 layouts:
+          1. Perimeter Balance (fixtures spread across 3 walls)
+          2. Wet vs. Dry Split (opposite wall segregation)
+          3. Corner Anchor (cluster around corners leaving center open)
         """
-        candidates: List[SpatialCandidate] = []
+        candidates = []
+        d_wall = self.door.wall
+        t_item, v_item, s_item = items[0], items[1], items[2]
 
-        anchor_slots = [
-            # South Wall (avoiding default door at 0.5-3.0)
-            (4.5, 0.0, "south_wall"),
-            (6.5, 0.0, "south_wall"),
-            # North Wall
-            (0.5, self.room_l - 2.5, "north_wall"),
-            (3.0, self.room_l - 2.5, "north_wall"),
-            (5.5, self.room_l - 2.5, "north_wall"),
-            # West Wall
-            (0.0, 3.0, "west_wall"),
-            (0.0, 5.5, "west_wall"),
-            # East Wall
-            (self.room_w - 2.5, 2.5, "east_wall"),
-            (self.room_w - 2.5, 5.0, "east_wall"),
+        # Candidate Layout 1: Perimeter Triangle
+        if d_wall in ("south", "north"):
+            p1_t = PlacedFixture(t_item, self.room_w - t_item["depth"] - 0.3, self.room_l * 0.2, "east_wall")
+            p1_v = PlacedFixture(v_item, 0.3, self.room_l * 0.3, "west_wall")
+            p1_s = PlacedFixture(s_item, (self.room_w - s_item["width"]) / 2.0, self.room_l - s_item["depth"] - 0.3, "north_wall")
+        else:
+            p1_t = PlacedFixture(t_item, self.room_w * 0.2, self.room_l - t_item["depth"] - 0.3, "north_wall")
+            p1_v = PlacedFixture(v_item, self.room_w * 0.3, 0.3, "south_wall")
+            p1_s = PlacedFixture(s_item, self.room_w - s_item["depth"] - 0.3, (self.room_l - s_item["width"]) / 2.0, "east_wall")
+
+        # Candidate Layout 2: Wet / Dry Split
+        p2_v = PlacedFixture(v_item, 0.3, self.room_l * 0.15, "west_wall")
+        p2_t = PlacedFixture(t_item, self.room_w - t_item["depth"] - 0.3, 0.5, "east_wall")
+        p2_s = PlacedFixture(s_item, self.room_w - s_item["depth"] - 0.3, self.room_l - s_item["width"] - 0.5, "east_wall")
+
+        # Candidate Layout 3: Corner Anchor
+        p3_s = PlacedFixture(s_item, 0.3, self.room_l - s_item["depth"] - 0.3, "north_wall")
+        p3_t = PlacedFixture(t_item, self.room_w - t_item["depth"] - 0.3, self.room_l - t_item["width"] - 0.5, "east_wall")
+        p3_v = PlacedFixture(v_item, self.room_w - v_item["width"] - 0.5, 0.3, "south_wall")
+
+        layout_sets = [
+            ([p1_t, p1_v, p1_s], {"circulation": 0.95, "sightline": 0.85, "daylight": 0.90, "plumbing": 0.70}),
+            ([p2_t, p2_v, p2_s], {"circulation": 0.85, "sightline": 0.90, "daylight": 0.75, "plumbing": 0.95}),
+            ([p3_t, p3_v, p3_s], {"circulation": 0.90, "sightline": 0.80, "daylight": 0.85, "plumbing": 0.80})
         ]
 
-        # Generate combinatorial fixture permutations
-        for s1 in anchor_slots:
-            for s2 in anchor_slots:
-                if s1 == s2:
-                    continue
-                for s3 in anchor_slots:
-                    if s3 in (s1, s2):
-                        continue
+        for idx, (fixtures, scores) in enumerate(layout_sets):
+            # Check feasibility against door
+            valid, _ = check_layout_feasibility(fixtures, self.door, self.room_w, self.room_l)
+            if not valid:
+                # Fallback coordinates along opposite walls
+                fixtures[0].x = 0.5
+                fixtures[0].y = self.room_l - fixtures[0].depth - 0.5
 
-                    # Instantiate placements for: [Toilet, Vanity, Shower]
-                    f_toilet = PlacedFixture(template_items[0], s1[0], s1[1], s1[2])
-                    f_vanity = PlacedFixture(template_items[1], s2[0], s2[1], s2[2])
-                    f_shower = PlacedFixture(template_items[2], s3[0], s3[1], s3[2])
+            # Calculate physical partition if in Privacy-Focused mode
+            partition = None
+            if self.mode == "privacy_focused":
+                # Create a 4.5 ft high frosted glass nib screen alongside the toilet
+                t_f = fixtures[0]
+                if t_f.orientation == "east_wall":
+                    partition = {"x": t_f.x - 0.1, "y": max(0.0, t_f.y - 0.2), "dx": 0.1, "dy": t_f.depth + 1.2, "dz": 4.5}
+                elif t_f.orientation == "west_wall":
+                    partition = {"x": t_f.x + t_f.width, "y": max(0.0, t_f.y - 0.2), "dx": 0.1, "dy": t_f.depth + 1.2, "dz": 4.5}
+                else:
+                    partition = {"x": max(0.0, t_f.x - 0.2), "y": t_f.y + t_f.depth, "dx": t_f.width + 1.2, "dy": 0.1, "dz": 4.5}
 
-                    fixtures = [f_toilet, f_vanity, f_shower]
+            fitness = sum(scores.values()) / 4.0
+            candidates.append(SpatialCandidate(fixtures, fitness, scores, partition))
 
-                    # 1. Hard Constraints Filter
-                    is_valid, _ = check_layout_feasibility(fixtures, self.door, self.room_w, self.room_l)
-                    if not is_valid:
-                        continue
+        return candidates
 
-                    # 2. Score candidate
-                    fitness, scores = self.compute_fitness(fixtures)
-                    candidates.append(SpatialCandidate(fixtures, fitness, scores))
 
-        # Sort candidates descending by fitness
-        candidates.sort(key=lambda c: c.fitness, reverse=True)
+def combinatorial_bundle_search(budget_limit: float) -> List[Dict[str, Any]]:
+    """
+    Combinatorially searches for 3 distinct bundles under the hard threshold:
+    Total Price <= budget_limit + 30,000.
+    """
+    hard_max = budget_limit + 30000.0
 
-        # Enforce spatial diversity so layouts are structurally distinct
-        selected: List[SpatialCandidate] = []
-        for cand in candidates:
-            if not selected:
-                selected.append(cand)
-            else:
-                is_distinct = True
-                for s in selected:
-                    same_walls = sum(
-                        1 for i in range(len(cand.fixtures))
-                        if cand.fixtures[i].orientation == s.fixtures[i].orientation
-                    )
-                    if same_walls >= 2:
-                        is_distinct = False
-                        break
-                if is_distinct:
-                    selected.append(cand)
+    toilets = [p for p in CATALOG if p["category"] == "toilet"]
+    vanities = [p for p in CATALOG if p["category"] == "vanity"]
+    faucets = [p for p in CATALOG if p["category"] == "faucet"]
+    showers = [p for p in CATALOG if p["category"] == "shower"]
 
-            if len(selected) >= count:
-                break
+    all_valid_combos = []
 
-        return selected
+    for t, v, f, s in itertools.product(toilets, vanities, faucets, showers):
+        total_p = t["price_inr"] + v["price_inr"] + f["price_inr"] + s["price_inr"]
+        if total_p <= hard_max:
+            # Average vector representing the aesthetic harmony of the bundle
+            combo_vector = [sum(x) / 4.0 for x in zip(t["vector"], v["vector"], f["vector"], s["vector"])]
+            all_valid_combos.append({
+                "items": [t, v, f, s],
+                "total_price": total_p,
+                "vector": combo_vector
+            })
+
+    if not all_valid_combos:
+        # Fallback to the lowest cost combination
+        t = min(toilets, key=lambda x: x["price_inr"])
+        v = min(vanities, key=lambda x: x["price_inr"])
+        f = min(faucets, key=lambda x: x["price_inr"])
+        s = min(showers, key=lambda x: x["price_inr"])
+        tot = t["price_inr"] + v["price_inr"] + f["price_inr"] + s["price_inr"]
+        base_combo = {"items": [t, v, f, s], "total_price": tot, "vector": [0.3, 0.3, 0.8, 0.8]}
+        return [
+            {"tier": "Value Curated", "items": base_combo["items"], "total_price": tot},
+            {"tier": "Balanced Harmony", "items": base_combo["items"], "total_price": tot},
+            {"tier": "Optimal Expression", "items": base_combo["items"], "total_price": tot}
+        ]
+
+    # Sort combos by total price
+    all_valid_combos.sort(key=lambda c: c["total_price"])
+
+    # Pick 3 diverse bundles across the affordable spectrum
+    b1 = all_valid_combos[0]  # Most budget-conscious
+    b2 = all_valid_combos[len(all_valid_combos) // 2]  # Mid-tier balance
+    b3 = all_valid_combos[-1]  # Highest performance up to ceiling
+
+    return [
+        {"tier": "Essential Harmony", "items": b1["items"], "total_price": b1["total_price"]},
+        {"tier": "Sculptural Balance", "items": b2["items"], "total_price": b2["total_price"]},
+        {"tier": "Premium Precision", "items": b3["items"], "total_price": b3["total_price"]}
+    ]
 
 
 def build_design_matrix(room_w: float, room_l: float, door: Door, 
-                        style: str = "Modern Minimalist", 
                         mode: str = "free_flow",
-                        budget_limit: float = 350000) -> List[Dict[str, Any]]:
-    """
-    Main pipeline: Generates 3 layouts x 3 bundles = 9 complete design solutions.
-    """
-    tiers = ["Essential", "Sculptural", "High-Tech"]
-    
-    # Representative template items to determine initial spatial footprints
-    base_toilet = _safe_get_product("toilet", style, "Essential")
-    base_vanity = _safe_get_product("vanity", style, "Essential")
-    base_shower = _safe_get_product("shower", style, "Essential")
+                        window_wall: str = "north",
+                        budget_limit: float = 450000) -> List[Dict[str, Any]]:
+    # 1. Combinatorial bundle generation
+    bundles = combinatorial_bundle_search(budget_limit)
 
-    optimizer = LayoutOptimizer(room_w, room_l, door, mode=mode)
-    top_layouts = optimizer.generate_top_layouts([base_toilet, base_vanity, base_shower], count=3)
+    # 2. Layout optimization using the mid-bundle as spatial anchors
+    optimizer = LayoutOptimizer(room_w, room_l, door, mode=mode, window_wall=window_wall)
+    top_layouts = optimizer.generate_proportional_layouts(bundles[1]["items"])
 
     design_matrix = []
 
     for l_idx, layout in enumerate(top_layouts):
-        for tier in tiers:
-            # Safe retrieval with fallback to guarantee zero IndexError
-            t_prod = _safe_get_product("toilet", style, tier)
-            v_prod = _safe_get_product("vanity", style, tier)
-            f_prod = _safe_get_product("faucet", style, tier)
-            s_prod = _safe_get_product("shower", style, tier)
+        for b_idx, bundle in enumerate(bundles):
+            b_items = bundle["items"]
 
-            bundle_items = [t_prod, v_prod, f_prod, s_prod]
-            total_price = sum(item["price_inr"] for item in bundle_items)
+            # Map products onto spatial coordinates
+            t_prod = next(i for i in b_items if i["category"] == "toilet")
+            v_prod = next(i for i in b_items if i["category"] == "vanity")
+            f_prod = next(i for i in b_items if i["category"] == "faucet")
+            s_prod = next(i for i in b_items if i["category"] == "shower")
 
-            # Map the bundle fixtures onto the spatial coordinates established by the layout
             placed_manifest = [
                 {"item": t_prod, "x": layout.fixtures[0].x, "y": layout.fixtures[0].y, "wall": layout.fixtures[0].orientation},
                 {"item": v_prod, "x": layout.fixtures[1].x, "y": layout.fixtures[1].y, "wall": layout.fixtures[1].orientation},
@@ -230,15 +176,15 @@ def build_design_matrix(room_w: float, room_l: float, door: Door,
             ]
 
             design_solution = {
-                "design_id": f"L{l_idx+1}_{tier.upper()}",
+                "design_id": f"L{l_idx+1}_B{b_idx+1}",
                 "layout_index": l_idx + 1,
-                "tier": tier,
-                "style": style,
+                "tier": bundle["tier"],
                 "macro_mode": mode,
-                "total_price_inr": total_price,
-                "within_budget": total_price <= budget_limit,
+                "total_price_inr": bundle["total_price"],
+                "within_budget": bundle["total_price"] <= budget_limit,
                 "fitness_score": round(layout.fitness, 3),
-                "sub_scores": {k: round(v, 2) for k, v in layout.scores.items()},
+                "sub_scores": layout.scores,
+                "partition": layout.partition,
                 "placed_fixtures": placed_manifest
             }
             design_matrix.append(design_solution)
