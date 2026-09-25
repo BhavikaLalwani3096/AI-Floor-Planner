@@ -1,5 +1,5 @@
 """
-visualizer_2d.py - Universal 2D Blueprint rendering for all door walls and types.
+visualizer_2d.py - Universal 2D Blueprint with 3-cell architectural privacy partitions.
 """
 
 import matplotlib.pyplot as plt
@@ -18,14 +18,14 @@ def render_2d_blueprint(design_solution: Dict[str, Any],
     ax.plot([0, room_w, room_w, 0, 0], [0, 0, room_l, room_l, 0], color="#0F172A", linewidth=3)
     ax.fill([0, room_w, room_w, 0], [0, 0, room_l, room_l], color="#F8FAFC")
 
-    # 2. Universal Door Rendering across all 4 walls
+    # 2. Universal Door Openings across all 4 walls
     dw = door.width
     do = door.offset
     wall = door.wall
 
     if wall == "south":
         p_door = (do, 0.0)
-        ax.plot([do, do + dw], [0, 0], color="#F8FAFC", linewidth=4)  # Gap
+        ax.plot([do, do + dw], [0, 0], color="#F8FAFC", linewidth=4)
         if door.door_type == "swing_inward":
             ax.plot([do, do], [0, dw], color="#2563EB", linewidth=2)
             ax.add_patch(patches.Arc(p_door, dw * 2, dw * 2, angle=0, theta1=0, theta2=90, color="#3B82F6", linestyle="--"))
@@ -56,12 +56,15 @@ def render_2d_blueprint(design_solution: Dict[str, Any],
         elif door.door_type == "sliding":
             ax.plot([room_w + 0.15, room_w + 0.15], [do, do + dw], color="#10B981", linewidth=3)
 
-    # 3. Privacy Partition if present
-    part = design_solution.get("partition")
-    if part:
-        ax.add_patch(patches.Rectangle((part["x"], part["y"]), part["dx"], part["dy"],
-                                       linewidth=2, edgecolor="#0284C7", facecolor="#BAE6FD", alpha=0.7))
-        ax.text(part["x"], part["y"], "PRIVACY SCREEN", color="#0369A1", fontsize=6, weight="bold")
+    # 3. Privacy Compartments (WC Cell & Wet Cell)
+    partitions = design_solution.get("partitions", [])
+    for part in partitions:
+        ax.add_patch(patches.Rectangle(
+            (part["x"], part["y"]), part["dx"], part["dy"],
+            linewidth=2, edgecolor="#0284C7", facecolor="#BAE6FD", alpha=0.6
+        ))
+        ax.text(part["x"] + part["dx"]/2.0, part["y"] + part["dy"]/2.0, "SCREEN", 
+                color="#0369A1", fontsize=6, weight="bold", ha="center", va="center")
 
     # 4. Placed Fixtures
     color_map = {"toilet": "#3B82F6", "vanity": "#D97706", "shower": "#06B6D4"}

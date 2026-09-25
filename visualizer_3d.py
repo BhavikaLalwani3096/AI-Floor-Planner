@@ -1,5 +1,5 @@
 """
-visualizer_3d.py - Interactive 3D scene with physical privacy screens and architectural cutouts.
+visualizer_3d.py - Interactive 3D scene with 3-cell architectural compartments and flush mirrors.
 """
 
 import plotly.graph_objects as go
@@ -41,48 +41,64 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
     thick = 0.2
     wall_h = 3.5
 
-    # 1. Floor
+    # 1. Neutral Porcelain Floor
     fig.add_trace(go.Mesh3d(
         x=[0, room_w, room_w, 0], y=[0, 0, room_l, room_l], z=[0, 0, 0, 0],
-        i=[0, 0], j=[1, 2], k=[2, 3], color="#F1F5F9", name="Porcelain Floor", opacity=1.0
+        i=[0, 0], j=[1, 2], k=[2, 3], color="#F8FAFC", name="Porcelain Floor", opacity=1.0
     ))
 
-    # 2. Universal Parametric Walls
-    # South
-    if door.wall == "south":
-        fig.add_traces(_create_3d_box(0, 0, 0, door.offset, thick, wall_h, "South Wall (L)", wall_color, 0.4))
-        fig.add_traces(_create_3d_box(door.offset + door.width, 0, 0, room_w - (door.offset + door.width), thick, wall_h, "South Wall (R)", wall_color, 0.4))
-    else:
-        fig.add_traces(_create_3d_box(0, 0, 0, room_w, thick, wall_h, "South Wall", wall_color, 0.4))
+    # 2. Universal Parametric Outer Walls with Door Openings
+    for wall_name in ["south", "north", "west", "east"]:
+        is_door = (door.wall == wall_name)
+        if wall_name == "south":
+            if is_door:
+                d_s, d_e = door.offset, door.offset + door.width
+                if d_s > 0.05:
+                    fig.add_traces(_create_3d_box(0, 0, 0, d_s, thick, wall_h, "South Wall (L)", wall_color, 0.4))
+                if d_e < room_w - 0.05:
+                    fig.add_traces(_create_3d_box(d_e, 0, 0, room_w - d_e, thick, wall_h, "South Wall (R)", wall_color, 0.4))
+            else:
+                fig.add_traces(_create_3d_box(0, 0, 0, room_w, thick, wall_h, "South Wall", wall_color, 0.4))
 
-    # North
-    if door.wall == "north":
-        fig.add_traces(_create_3d_box(0, room_l - thick, 0, door.offset, thick, wall_h, "North Wall (L)", wall_color, 0.4))
-        fig.add_traces(_create_3d_box(door.offset + door.width, room_l - thick, 0, room_w - (door.offset + door.width), thick, wall_h, "North Wall (R)", wall_color, 0.4))
-    else:
-        fig.add_traces(_create_3d_box(0, room_l - thick, 0, room_w, thick, wall_h, "North Wall", wall_color, 0.4))
+        elif wall_name == "north":
+            if is_door:
+                d_s, d_e = door.offset, door.offset + door.width
+                if d_s > 0.05:
+                    fig.add_traces(_create_3d_box(0, room_l - thick, 0, d_s, thick, wall_h, "North Wall (L)", wall_color, 0.4))
+                if d_e < room_w - 0.05:
+                    fig.add_traces(_create_3d_box(d_e, room_l - thick, 0, room_w - d_e, thick, wall_h, "North Wall (R)", wall_color, 0.4))
+            else:
+                fig.add_traces(_create_3d_box(0, room_l - thick, 0, room_w, thick, wall_h, "North Wall", wall_color, 0.4))
 
-    # West
-    if door.wall == "west":
-        fig.add_traces(_create_3d_box(0, 0, 0, thick, door.offset, wall_h, "West Wall (B)", wall_color, 0.4))
-        fig.add_traces(_create_3d_box(0, door.offset + door.width, 0, thick, room_l - (door.offset + door.width), wall_h, "West Wall (T)", wall_color, 0.4))
-    else:
-        fig.add_traces(_create_3d_box(0, 0, 0, thick, room_l, wall_h, "West Wall", wall_color, 0.4))
+        elif wall_name == "west":
+            if is_door:
+                d_s, d_e = door.offset, door.offset + door.width
+                if d_s > 0.05:
+                    fig.add_traces(_create_3d_box(0, 0, 0, thick, d_s, wall_h, "West Wall (B)", wall_color, 0.4))
+                if d_e < room_l - 0.05:
+                    fig.add_traces(_create_3d_box(0, d_e, 0, thick, room_l - d_e, wall_h, "West Wall (T)", wall_color, 0.4))
+            else:
+                fig.add_traces(_create_3d_box(0, 0, 0, thick, room_l, wall_h, "West Wall", wall_color, 0.4))
 
-    # East
-    if door.wall == "east":
-        fig.add_traces(_create_3d_box(room_w - thick, 0, 0, thick, door.offset, wall_h, "East Wall (B)", wall_color, 0.4))
-        fig.add_traces(_create_3d_box(room_w - thick, door.offset + door.width, 0, thick, room_l - (door.offset + door.width), wall_h, "East Wall (T)", wall_color, 0.4))
-    else:
-        fig.add_traces(_create_3d_box(room_w - thick, 0, 0, thick, room_l, wall_h, "East Wall", wall_color, 0.4))
+        elif wall_name == "east":
+            if is_door:
+                d_s, d_e = door.offset, door.offset + door.width
+                if d_s > 0.05:
+                    fig.add_traces(_create_3d_box(room_w - thick, 0, 0, thick, d_s, wall_h, "East Wall (B)", wall_color, 0.4))
+                if d_e < room_l - 0.05:
+                    fig.add_traces(_create_3d_box(room_w - thick, d_e, 0, thick, room_l - d_e, wall_h, "East Wall (T)", wall_color, 0.4))
+            else:
+                fig.add_traces(_create_3d_box(room_w - thick, 0, 0, thick, room_l, wall_h, "East Wall", wall_color, 0.4))
 
-    # 3. Privacy Partition Wall
-    part = design_solution.get("partition")
-    if part:
-        fig.add_traces(_create_3d_box(part["x"], part["y"], 0.0, part["dx"], part["dy"], part["dz"], 
-                                      "Frosted Glass Privacy Screen", "#38BDF8", 0.55))
+    # 3. Privacy Compartment Screens (WC Cell and Wet Cell Screens)
+    partitions = design_solution.get("partitions", [])
+    for part in partitions:
+        fig.add_traces(_create_3d_box(
+            part["x"], part["y"], 0.0, part["dx"], part["dy"], part.get("dz", 5.5),
+            part.get("name", "Privacy Cell Partition"), "#38BDF8", 0.45
+        ))
 
-    # 4. Placed Fixtures
+    # 4. Placed Fixtures & Flush Mounting
     for p in design_solution["placed_fixtures"]:
         item = p["item"]
         cat = item["category"]
@@ -95,12 +111,26 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
         if cat == "toilet":
             col = "#09090B" if "Black" in item.get("finish", "") else "#FFFFFF"
             fig.add_traces(_create_3d_box(x, y, z, dx, dy, dz, item["name"], col, 0.98))
+
         elif cat == "vanity":
             col = "#78350F" if "Walnut" in item.get("finish", "") else "#1E293B"
             fig.add_traces(_create_3d_box(x, y, z, dx, dy, dz, item["name"], col, 0.95))
-            fig.add_traces(_create_3d_box(x, y, z + dz + 0.2, dx, 0.05, 2.0, "Backlit Mirror", "#E0F2FE", 0.75))
+
+            # Flush Architectural Mirror mounted on the supporting wall
+            m_h = 2.4
+            m_thick = 0.04
+            if wall_str == "south_wall":
+                fig.add_traces(_create_3d_box(x, 0.02, z + dz + 0.2, dx, m_thick, m_h, "Backlit Mirror", "#E0F2FE", 0.8))
+            elif wall_str == "north_wall":
+                fig.add_traces(_create_3d_box(x, room_l - m_thick - 0.02, z + dz + 0.2, dx, m_thick, m_h, "Backlit Mirror", "#E0F2FE", 0.8))
+            elif wall_str == "west_wall":
+                fig.add_traces(_create_3d_box(0.02, y, z + dz + 0.2, m_thick, dy, m_h, "Backlit Mirror", "#E0F2FE", 0.8))
+            elif wall_str == "east_wall":
+                fig.add_traces(_create_3d_box(room_w - m_thick - 0.02, y, z + dz + 0.2, m_thick, dy, m_h, "Backlit Mirror", "#E0F2FE", 0.8))
+
         elif cat == "faucet":
-            fig.add_traces(_create_3d_box(x + dx*0.3, y + dy*0.3, 2.8, 0.3, 0.3, 0.7, item["name"], "#0F172A", 1.0))
+            fig.add_traces(_create_3d_box(x + dx * 0.35, y + dy * 0.35, z + 2.8, 0.3, 0.3, 0.7, item["name"], "#0F172A", 1.0))
+
         elif cat == "shower":
             fig.add_traces(_create_3d_box(x, y, 0.0, dx, dy, dz, item["name"], "#BAE6FD", 0.35))
 

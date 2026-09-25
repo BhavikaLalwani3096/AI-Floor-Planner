@@ -1,32 +1,30 @@
 # test_core.py
-from catalog import get_products_by_filter
-from geometry import Door, PlacedFixture, check_layout_feasibility
+from catalog import CATALOG
+from geometry import Door, PerimeterCoordinateSystem, check_layout_feasibility, calculate_sightline_vector_score
 
-toilets = get_products_by_filter(category="toilet", style="Modern Minimalist")
-vanities = get_products_by_filter(category="vanity", style="Modern Minimalist")
+# 1. Fetch sample items
+toilet = next(p for p in CATALOG if p["category"] == "toilet")
+vanity = next(p for p in CATALOG if p["category"] == "vanity")
+shower = next(p for p in CATALOG if p["category"] == "shower")
 
-toilet_data = toilets[0]
-vanity_data = vanities[0]
+# 2. Setup a 10ft x 8ft room
+room_w, room_l = 10.0, 8.0
+pcs = PerimeterCoordinateSystem(room_w, room_l)
+door = Door(wall="south", offset=1.0, width=2.5, door_type="swing_inward")
 
-# South wall has a door at offset 0.5 (spans x=0.5 to x=3.0)
-door_inward = Door(wall="south", offset=0.5, width=2.5, door_type="swing_inward")
-door_sliding = Door(wall="south", offset=0.5, width=2.5, door_type="sliding")
+# 3. Test continuous perimeter placements (u values in feet)
+# Perimeter = 2 * (10 + 8) = 36 ft total
+p_toilet = pcs.u_to_placement(12.0, toilet) # u=12 is on East Wall (10 + 2)
+p_vanity = pcs.u_to_placement(22.0, vanity) # u=22 is on North Wall (10 + 8 + 4)
+p_shower = pcs.u_to_placement(30.0, shower) # u=30 is on West Wall (10 + 8 + 10 + 2)
 
-# SCENARIO A: Toilet placed at x=1.0, y=1.0 (inside the inward swing arc, but away from the wall door frame)
-# Note: Inward swing box is x in [0.5, 3.0], y in [0.0, 2.5]
-t_in_swing = PlacedFixture(toilet_data, x=1.0, y=1.0, orientation="north_wall")
+fixtures = [p_toilet, p_vanity, p_shower]
 
-valid_inward, msg_inward = check_layout_feasibility([t_in_swing], door_inward, 8.0, 8.0)
-valid_sliding, msg_sliding = check_layout_feasibility([t_in_swing], door_sliding, 8.0, 8.0)
+# 4. Run Physics Check
+valid, msg = check_layout_feasibility(fixtures, door, room_w, room_l)
+sight_score = calculate_sightline_vector_score(door, p_toilet, p_vanity, room_w, room_l)
 
-print(f"Test Inside Swing Arc:")
-print(f"  Inward Door:  {valid_inward} -> {msg_inward}")
-print(f"  Sliding Door: {valid_sliding} -> {msg_sliding}")
-
-# SCENARIO B: Proper layout along East wall (x=6.0, y=0.0) away from door
-t_clear = PlacedFixture(toilet_data, x=4.0, y=0.0, orientation="south_wall")
-v_clear = PlacedFixture(vanity_data, x=6.0, y=0.0, orientation="south_wall")
-
-valid_both, msg_both = check_layout_feasibility([t_clear, v_clear], door_inward, 8.0, 8.0)
-print(f"\nTest Clear Placement (x=4.0, 6.0):")
-print(f"  Inward Door:  {valid_both} -> {msg_both}")
+print(f"Physics Collision Check: {valid} -> {msg}")
+print(f"Calculated Sightline Vector Score: {sight_score:.3f}")
+for f in fixtures:
+    print(f"  {f.data['name']} -> Position: ({f.x:.1f}, {f.y:.1f}) on {f.orientation}")
