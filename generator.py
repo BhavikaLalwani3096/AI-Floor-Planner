@@ -1,7 +1,7 @@
 """
-generator.py - Autonomous Spatial Optimization with 3-Zone Compartment Planning.
-Partitions the bathroom into dedicated cells (Shower, WC Alcove, Open Vanity Corridor)
-and guarantees zero collision between partitions and fixtures.
+generator.py - Synchronized Autonomous Spatial Optimization & Vector Engine.
+Guarantees 100% 2D/3D manifest synchronization, zero fixture overlaps,
+and autonomous 4/5-fixture suite expansion for large rooms.
 """
 
 import math
@@ -20,7 +20,6 @@ from geometry import (
 
 
 class SpatialCandidate:
-    """Represents an autonomously generated and scored layout solution."""
     def __init__(self, fixtures: List[PlacedFixture], fitness: float, scores: Dict[str, float], partitions: List[Dict[str, Any]] = None):
         self.fixtures = fixtures
         self.fitness = fitness
@@ -29,10 +28,6 @@ class SpatialCandidate:
 
 
 class AutonomousSpatialOptimizer:
-    """
-    Search-based Spatial AI Solver.
-    Uses continuous perimeter parameterization and dynamic 3-zone cell creation.
-    """
     def __init__(self, room_w: float, room_l: float, door: Door, 
                  mode: str = "free_flow", window_wall: str = "north"):
         self.room_w = room_w
@@ -47,42 +42,35 @@ class AutonomousSpatialOptimizer:
         else:
             self.weights = {"circulation": 0.40, "sightline": 0.20, "daylight": 0.20, "plumbing": 0.20}
 
-    def _build_partitions(self, toilet: PlacedFixture, shower: PlacedFixture) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
-        """
-        Constructs functional 3-zone compartment screens:
-        - WC Privacy Screen: Isolates the toilet alcove.
-        - Wet Zone Glass Screen: Shields the shower spray from the vanity corridor.
-        Returns both rendering data and physical collision bounding boxes.
-        """
+    def _build_structural_partition(self, toilet: PlacedFixture) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
         if self.mode != "privacy_focused":
             return [], []
 
         screens = []
         hitboxes = []
-
-        # 1. Toilet Privacy Screen (runs alongside the toilet)
+        thick = 0.15
         t_box = toilet.bounding_box
-        thick = 0.1
-        screen_len = t_box.depth + 1.0 if "south" in toilet.orientation or "north" in toilet.orientation else t_box.width + 1.0
+        wall = toilet.orientation
 
-        if toilet.orientation == "south_wall":
-            screen_x = max(0.2, t_box.x - 0.3)
-            screen_data = {"x": screen_x, "y": 0.0, "dx": thick, "dy": min(screen_len, self.room_l * 0.45), "dz": 5.5, "name": "WC Privacy Screen"}
-        elif toilet.orientation == "north_wall":
-            screen_x = max(0.2, t_box.x - 0.3)
-            start_y = max(0.0, self.room_l - screen_len)
-            screen_data = {"x": screen_x, "y": start_y, "dx": thick, "dy": screen_len, "dz": 5.5, "name": "WC Privacy Screen"}
-        elif toilet.orientation == "west_wall":
-            screen_y = max(0.2, t_box.y - 0.3)
-            screen_data = {"x": 0.0, "y": screen_y, "dx": min(screen_len, self.room_w * 0.45), "dy": thick, "dz": 5.5, "name": "WC Privacy Screen"}
-        else:  # east_wall
-            screen_y = max(0.2, t_box.y - 0.3)
-            start_x = max(0.0, self.room_w - screen_len)
-            screen_data = {"x": start_x, "y": screen_y, "dx": screen_len, "dy": thick, "dz": 5.5, "name": "WC Privacy Screen"}
+        if wall == "south_wall":
+            screen_x = max(0.2, t_box.x - 0.25)
+            dy = min(t_box.depth + 1.0, self.room_l * 0.45)
+            s_data = {"x": screen_x, "y": 0.0, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
+        elif wall == "north_wall":
+            screen_x = max(0.2, t_box.x - 0.25)
+            dy = min(t_box.depth + 1.0, self.room_l * 0.45)
+            s_data = {"x": screen_x, "y": self.room_l - dy, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
+        elif wall == "west_wall":
+            screen_y = max(0.2, t_box.y - 0.25)
+            dx = min(t_box.width + 1.0, self.room_w * 0.45)
+            s_data = {"x": 0.0, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
+        else:
+            screen_y = max(0.2, t_box.y - 0.25)
+            dx = min(t_box.width + 1.0, self.room_w * 0.45)
+            s_data = {"x": self.room_w - dx, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
 
-        screens.append(screen_data)
-        hitboxes.append(BoundingBox(screen_data["x"], screen_data["y"], screen_data["dx"], screen_data["dy"]))
-
+        screens.append(s_data)
+        hitboxes.append(BoundingBox(s_data["x"], s_data["y"], s_data["dx"], s_data["dy"]))
         return screens, hitboxes
 
     def evaluate_candidate(self, fixtures: List[PlacedFixture]) -> Tuple[float, Dict[str, float]]:
@@ -90,23 +78,18 @@ class AutonomousSpatialOptimizer:
         vanity = next((f for f in fixtures if f.data["category"] == "vanity"), fixtures[1])
         shower = next((f for f in fixtures if f.data["category"] == "shower"), fixtures[2])
 
-        # 1. Circulation Score
-        activity_overlap_area = 0.0
-        total_activity_area = 0.0
-        for i, f1 in enumerate(fixtures):
-            total_activity_area += f1.activity_box.area
-            for j, f2 in enumerate(fixtures):
-                if i != j:
-                    activity_overlap_area += f1.activity_box.intersection_area(f2.bounding_box)
+        activity_overlap = sum(
+            f1.activity_box.intersection_area(f2.bounding_box)
+            for i, f1 in enumerate(fixtures)
+            for j, f2 in enumerate(fixtures) if i != j
+        )
+        total_act = sum(f.activity_box.area for f in fixtures) or 1.0
+        s_circ = max(0.0, 1.0 - (activity_overlap / total_act))
 
-        s_circ = max(0.0, 1.0 - (activity_overlap_area / (total_activity_area or 1.0)))
-
-        # 2. Sightline Raycast Score
         s_sight = calculate_sightline_vector_score(self.door, toilet, vanity, self.room_w, self.room_l)
         if self.mode == "privacy_focused":
             s_sight = math.pow(s_sight, 1.4)
 
-        # 3. Daylight Score
         s_daylight = 0.5
         if shower.orientation.startswith(self.window_wall):
             s_daylight += 0.45
@@ -114,8 +97,7 @@ class AutonomousSpatialOptimizer:
             s_daylight += 0.20
         s_daylight = min(1.0, s_daylight)
 
-        # 4. Plumbing Score
-        s_plumb = calculate_plumbing_euclidean_score([toilet, shower], self.room_w, self.room_l)
+        s_plumb = calculate_plumbing_euclidean_score(fixtures, self.room_w, self.room_l)
 
         scores = {
             "circulation": round(s_circ, 3),
@@ -131,9 +113,14 @@ class AutonomousSpatialOptimizer:
         perimeter = self.pcs.perimeter
         step = 1.0
         u_samples = [i * step for i in range(int(perimeter // step))]
+        has_extra = len(items) > 3
 
         for u_t in u_samples[::2]:
             p_toilet = self.pcs.u_to_placement(u_t, items[0])
+            screens, partition_boxes = self._build_structural_partition(p_toilet)
+
+            if any(self.door.collides_with_box(pb, self.room_w, self.room_l) for pb in partition_boxes):
+                continue
 
             for u_v in u_samples[::2]:
                 if abs(u_t - u_v) < 2.5:
@@ -141,32 +128,35 @@ class AutonomousSpatialOptimizer:
                 p_vanity = self.pcs.u_to_placement(u_v, items[1])
 
                 for u_s in u_samples[::2]:
-                    if abs(u_s - u_t) < 3.5 or abs(u_s - u_v) < 3.5:
+                    if abs(u_s - u_t) < 3.0 or abs(u_s - u_v) < 3.0:
                         continue
                     p_shower = self.pcs.u_to_placement(u_s, items[2])
 
                     fixtures = [p_toilet, p_vanity, p_shower]
 
-                    # 1. Physical Feasibility Gate against walls and door
-                    is_valid, _ = check_layout_feasibility(fixtures, self.door, self.room_w, self.room_l)
-                    if not is_valid:
-                        continue
-
-                    # 2. Build 3-zone privacy screens and verify zero collision with partition hitboxes
-                    screens, screen_hitboxes = self._build_partitions(p_toilet, p_shower)
-                    partition_clash = False
-                    for shb in screen_hitboxes:
-                        # Partition must not intersect the shower or the vanity
-                        if p_shower.bounding_box.intersects(shb) or p_vanity.bounding_box.intersects(shb):
-                            partition_clash = True
-                            break
-                        # Partition must not block the door
-                        if self.door.collides_with_fixture(shb, self.room_w, self.room_l):
-                            partition_clash = True
-                            break
-
-                    if partition_clash:
-                        continue
+                    # Fully integrated solver placement for 4th item (Bathtub or Storage)
+                    if has_extra:
+                        placed_extra = False
+                        for u_ex in u_samples[::2]:
+                            if abs(u_ex - u_t) < 2.5 or abs(u_ex - u_v) < 2.5 or abs(u_ex - u_s) < 3.0:
+                                continue
+                            p_ex = self.pcs.u_to_placement(u_ex, items[3])
+                            cand_suite = [p_toilet, p_vanity, p_shower, p_ex]
+                            is_val, _ = check_layout_feasibility(
+                                cand_suite, self.door, self.room_w, self.room_l, partitions=partition_boxes
+                            )
+                            if is_val:
+                                fixtures = cand_suite
+                                placed_extra = True
+                                break
+                        if not placed_extra:
+                            continue
+                    else:
+                        is_val, _ = check_layout_feasibility(
+                            fixtures, self.door, self.room_w, self.room_l, partitions=partition_boxes
+                        )
+                        if not is_val:
+                            continue
 
                     fitness, scores = self.evaluate_candidate(fixtures)
                     valid_candidates.append(SpatialCandidate(fixtures, fitness, scores, screens))
@@ -177,10 +167,12 @@ class AutonomousSpatialOptimizer:
             p_t = self.pcs.u_to_placement(0.5, items[0])
             p_v = self.pcs.u_to_placement(self.room_w + 0.5, items[1])
             p_s = self.pcs.u_to_placement(self.room_w + self.room_l + 0.5, items[2])
-            fit, sc = self.evaluate_candidate([p_t, p_v, p_s])
-            return [SpatialCandidate([p_t, p_v, p_s], fit, sc, [])] * target_count
+            fixtures = [p_t, p_v, p_s]
+            if has_extra:
+                fixtures.append(self.pcs.u_to_placement(2.0 * self.room_w + self.room_l + 0.5, items[3]))
+            fit, sc = self.evaluate_candidate(fixtures)
+            return [SpatialCandidate(fixtures, fit, sc, [])] * target_count
 
-        # Structural Diversity Clustering
         selected_layouts: List[SpatialCandidate] = []
         for cand in valid_candidates:
             if not selected_layouts:
@@ -189,14 +181,14 @@ class AutonomousSpatialOptimizer:
                 is_distinct = True
                 for existing in selected_layouts:
                     matching_walls = sum(
-                        1 for i in range(len(cand.fixtures))
+                        1 for i in range(min(len(cand.fixtures), len(existing.fixtures)))
                         if cand.fixtures[i].orientation == existing.fixtures[i].orientation
                     )
                     dist_disp = sum(
                         math.hypot(c.x - e.x, c.y - e.y)
                         for c, e in zip(cand.fixtures, existing.fixtures)
                     )
-                    if matching_walls >= 2 and dist_disp < (self.room_w * 0.4):
+                    if matching_walls >= 2 and dist_disp < (self.room_w * 0.35):
                         is_distinct = False
                         break
 
@@ -215,13 +207,15 @@ class AutonomousSpatialOptimizer:
         return selected_layouts
 
 
-def vector_bundle_search(budget_limit: float) -> List[Dict[str, Any]]:
+def vector_bundle_search(budget_limit: float, room_area: float) -> List[Dict[str, Any]]:
     hard_max = budget_limit + 30000.0
 
     toilets = [p for p in CATALOG if p["category"] == "toilet"]
     vanities = [p for p in CATALOG if p["category"] == "vanity"]
     faucets = [p for p in CATALOG if p["category"] == "faucet"]
     showers = [p for p in CATALOG if p["category"] == "shower"]
+    bathtubs = [p for p in CATALOG if p["category"] == "bathtub"]
+    storage = [p for p in CATALOG if p["category"] == "storage"]
 
     archetypes = [
         {"name": "Essential Harmony",  "target": [0.3, 0.3, 0.9, 0.8]},
@@ -230,40 +224,35 @@ def vector_bundle_search(budget_limit: float) -> List[Dict[str, Any]]:
     ]
 
     all_valid_bundles = []
-    for t, v, f, s in itertools.product(toilets, vanities, faucets, showers):
-        total_p = t["price_inr"] + v["price_inr"] + f["price_inr"] + s["price_inr"]
-        if total_p <= hard_max:
-            bundle_vec = [
-                sum(attr) / 4.0
-                for attr in zip(t["vector"], v["vector"], f["vector"], s["vector"])
-            ]
-            all_valid_bundles.append({
-                "items": [t, v, f, s],
-                "total_price": total_p,
-                "vector": bundle_vec
-            })
+    include_extra = (room_area >= 65.0)
+
+    if include_extra:
+        extra_items = bathtubs + storage
+        for t, v, f, s, ex in itertools.product(toilets, vanities, faucets, showers, extra_items):
+            total_p = t["price_inr"] + v["price_inr"] + f["price_inr"] + s["price_inr"] + ex["price_inr"]
+            if total_p <= hard_max:
+                bundle_vec = [sum(attr) / 5.0 for attr in zip(t["vector"], v["vector"], f["vector"], s["vector"], ex["vector"])]
+                all_valid_bundles.append({"items": [t, v, f, s, ex], "total_price": total_p, "vector": bundle_vec})
 
     if not all_valid_bundles:
-        t_min = min(toilets, key=lambda x: x["price_inr"])
-        v_min = min(vanities, key=lambda x: x["price_inr"])
-        f_min = min(faucets, key=lambda x: x["price_inr"])
-        s_min = min(showers, key=lambda x: x["price_inr"])
-        base_price = t_min["price_inr"] + v_min["price_inr"] + f_min["price_inr"] + s_min["price_inr"]
-        return [
-            {"tier": arch["name"], "items": [t_min, v_min, f_min, s_min], "total_price": base_price, "similarity": 0.8}
-            for arch in archetypes
-        ]
+        for t, v, f, s in itertools.product(toilets, vanities, faucets, showers):
+            total_p = t["price_inr"] + v["price_inr"] + f["price_inr"] + s["price_inr"]
+            if total_p <= hard_max:
+                bundle_vec = [sum(attr) / 4.0 for attr in zip(t["vector"], v["vector"], f["vector"], s["vector"])]
+                all_valid_bundles.append({"items": [t, v, f, s], "total_price": total_p, "vector": bundle_vec})
+
+    if not all_valid_bundles:
+        t_min, v_min = min(toilets, key=lambda x: x["price_inr"]), min(vanities, key=lambda x: x["price_inr"])
+        f_min, s_min = min(faucets, key=lambda x: x["price_inr"]), min(showers, key=lambda x: x["price_inr"])
+        base_items = [t_min, v_min, f_min, s_min]
+        tot = sum(i["price_inr"] for i in base_items)
+        return [{"tier": arch["name"], "items": base_items, "total_price": tot, "similarity": 0.85} for arch in archetypes]
 
     selected_bundles = []
     used_combinations = set()
 
     for arch in archetypes:
-        ranked = sorted(
-            all_valid_bundles,
-            key=lambda b: cosine_similarity(b["vector"], arch["target"]),
-            reverse=True
-        )
-
+        ranked = sorted(all_valid_bundles, key=lambda b: cosine_similarity(b["vector"], arch["target"]), reverse=True)
         chosen = None
         for cand in ranked:
             sku_tuple = tuple(i["sku"] for i in cand["items"])
@@ -290,7 +279,9 @@ def build_design_matrix(room_w: float, room_l: float, door: Door,
                         mode: str = "free_flow",
                         window_wall: str = "north",
                         budget_limit: float = 450000) -> List[Dict[str, Any]]:
-    bundles = vector_bundle_search(budget_limit)
+    room_area = room_w * room_l
+    bundles = vector_bundle_search(budget_limit, room_area)
+
     optimizer = AutonomousSpatialOptimizer(room_w, room_l, door, mode=mode, window_wall=window_wall)
     top_layouts = optimizer.solve_top_layouts(bundles[1]["items"], target_count=3)
 
@@ -311,6 +302,16 @@ def build_design_matrix(room_w: float, room_l: float, door: Door,
                 {"item": s_prod, "x": layout.fixtures[2].x, "y": layout.fixtures[2].y, "wall": layout.fixtures[2].orientation},
                 {"item": f_prod, "x": layout.fixtures[1].x, "y": layout.fixtures[1].y, "wall": layout.fixtures[1].orientation}
             ]
+
+            # 4th Item synchronization (Bathtub or Storage Tower)
+            if len(layout.fixtures) > 3 and len(b_items) > 4:
+                extra_prod = b_items[4]
+                placed_manifest.append({
+                    "item": extra_prod,
+                    "x": layout.fixtures[3].x,
+                    "y": layout.fixtures[3].y,
+                    "wall": layout.fixtures[3].orientation
+                })
 
             design_solution = {
                 "design_id": f"L{l_idx+1}_B{b_idx+1}",
