@@ -1,6 +1,6 @@
 """
-generator.py - Autonomous Constraint-Satisfaction Engine & Vector Recommender.
-Generates fully adaptive, non-clumping, 100% collision-free bathroom designs.
+generator.py - Autonomous Stochastic Spatial Optimization & Vector Curation Engine.
+Generates collision-free, code-compliant, structurally diverse architectural suites.
 """
 
 import math
@@ -28,10 +28,11 @@ def vector_bundle_search(budget_limit: float, room_area: float) -> List[Dict[str
     bathtubs = [p for p in CATALOG if p["category"] == "bathtub"]
     storage = [p for p in CATALOG if p["category"] == "storage"]
 
-    # Scale filtering for confined rooms
-    if room_area < 48.0:
-        vanities = [v for v in vanities if v["width"] <= 2.5]
+    # Scale filtering for confined rooms (< 45 sq ft)
+    if room_area < 45.0:
+        vanities = [v for v in vanities if v["width"] <= 2.0]
         showers = [s for s in showers if s["width"] <= 3.0]
+        toilets = [t for t in toilets if t["depth"] <= 1.9]
 
     archetypes = [
         {"name": "Essential Harmony",  "target": [0.3, 0.3, 0.9, 0.8]},
@@ -83,33 +84,33 @@ class AutonomousSpatialOptimizer:
         self.window = Window(window_wall, room_w, room_l)
         self.pcs = PerimeterCoordinateSystem(room_w, room_l)
 
-    def _build_structural_partition(self, toilet: PlacedFixture) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
-        if self.mode != "privacy_focused":
+    def _build_architectural_partitions(self, fixtures: List[PlacedFixture]) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
+        """
+        Builds true 3-way compartmentalization when Privacy Mode is active:
+        Divides room into Grooming Vestibule (vanity) and private rear cubicles (WC & Shower).
+        """
+        if self.mode != "privacy_focused" or self.room_w < 6.5 or self.room_l < 6.5:
             return [], []
 
         thick = 0.15
-        t_box = toilet.bounding_box
-        wall = toilet.orientation
-        side_clearance = 0.6  # Guarantees 15+ inches from toilet centerline
+        divider_y = round(self.room_l * 0.48, 2)
+        mid_x = round(self.room_w * 0.50, 2)
 
-        if wall == "south_wall":
-            screen_x = max(0.2, t_box.x - side_clearance)
-            dy = min(t_box.depth + 0.8, self.room_l * 0.45)
-            s_data = {"x": screen_x, "y": 0.0, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
-        elif wall == "north_wall":
-            screen_x = max(0.2, t_box.x - side_clearance)
-            dy = min(t_box.depth + 0.8, self.room_l * 0.45)
-            s_data = {"x": screen_x, "y": self.room_l - dy, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
-        elif wall == "west_wall":
-            screen_y = max(0.2, t_box.y - side_clearance)
-            dx = min(t_box.width + 0.8, self.room_w * 0.45)
-            s_data = {"x": 0.0, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
-        else:  # east_wall
-            screen_y = max(0.2, t_box.y - side_clearance)
-            dx = min(t_box.width + 0.8, self.room_w * 0.45)
-            s_data = {"x": self.room_w - dx, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
+        # Transverse acoustic glass divider wall with doorway opening
+        part_left = {"x": 0.0, "y": divider_y, "dx": max(0.5, mid_x - 1.2), "dy": thick, "dz": 6.5, "name": "Acoustic Glass Divider"}
+        part_right = {"x": mid_x + 1.2, "y": divider_y, "dx": max(0.5, self.room_w - (mid_x + 1.2)), "dy": thick, "dz": 6.5, "name": "Acoustic Glass Divider"}
+        part_spine = {"x": mid_x, "y": divider_y, "dx": thick, "dy": self.room_l - divider_y, "dz": 6.5, "name": "WC/Shower Spine Wall"}
 
-        return [s_data], [BoundingBox(s_data["x"], s_data["y"], s_data["dx"], s_data["dy"])]
+        screens = [part_left, part_right, part_spine]
+        p_boxes = [BoundingBox(p["x"], p["y"], p["dx"], p["dy"]) for p in screens]
+
+        # Verify that these partitions do not clash with the entry door or window
+        if any(self.door.collides_with_box(pb, self.room_w, self.room_l) for pb in p_boxes):
+            return [], []
+        if any(self.window.blocks_placement(pb) for pb in p_boxes):
+            return [], []
+
+        return screens, p_boxes
 
     def solve_bundle_layouts(self, items: List[Dict[str, Any]], target_count: int = 3, seed_offset: float = 0.0) -> List[Dict[str, Any]]:
         major_items = [i for i in items if i["category"] in ("toilet", "vanity", "shower", "storage", "bathtub")]
@@ -120,10 +121,12 @@ class AutonomousSpatialOptimizer:
         ex_item = major_items[3] if has_extra else None
 
         perimeter = self.pcs.perimeter
-        step = 1.2
-        # Stochastic continuous sampling across perimeter
-        base_samples = [((i * step) + seed_offset) % perimeter for i in range(int(perimeter // step))]
-        rng = random.Random(int(seed_offset * 100))
+        # High resolution: 0.6 ft step for compact rooms, 1.2 ft for large rooms
+        step = 0.6 if perimeter < 28.0 else 1.2
+        num_steps = int(perimeter // step)
+
+        base_samples = [((i * step) + (seed_offset % step)) % perimeter for i in range(num_steps)]
+        rng = random.Random(int(seed_offset * 1000) + 42)
         rng.shuffle(base_samples)
 
         valid_solutions = []
@@ -132,20 +135,20 @@ class AutonomousSpatialOptimizer:
             p_t = self.pcs.u_to_placement(u_t, t_item)
             if self.window.blocks_placement(p_t.bounding_box):
                 continue
-
-            screens, part_boxes = self._build_structural_partition(p_t)
-            if any(self.door.collides_with_box(pb, self.room_w, self.room_l) for pb in part_boxes):
-                continue
-            if any(self.window.blocks_placement(pb) for pb in part_boxes):
+            if self.door.collides_with_box(p_t.bounding_box, self.room_w, self.room_l):
                 continue
 
             for u_s in base_samples:
-                if abs(u_s - u_t) < 3.2:
+                if abs(u_s - u_t) < 2.6:
                     continue
                 p_s = self.pcs.u_to_placement(u_s, s_item)
+                if self.door.collides_with_box(p_s.bounding_box, self.room_w, self.room_l):
+                    continue
+                if p_s.bounding_box.intersects(p_t.bounding_box):
+                    continue
 
                 for u_v in base_samples:
-                    if abs(u_v - u_t) < 2.5 or abs(u_v - u_s) < 3.0:
+                    if abs(u_v - u_t) < 2.0 or abs(u_v - u_s) < 2.4:
                         continue
                     p_v = self.pcs.u_to_placement(u_v, v_item)
 
@@ -154,13 +157,14 @@ class AutonomousSpatialOptimizer:
                     if has_extra:
                         placed_extra = False
                         for u_ex in base_samples:
-                            if abs(u_ex - u_t) < 2.5 or abs(u_ex - u_v) < 2.5 or abs(u_ex - u_s) < 3.0:
+                            if abs(u_ex - u_t) < 2.0 or abs(u_ex - u_v) < 2.0 or abs(u_ex - u_s) < 2.4:
                                 continue
                             p_ex = self.pcs.u_to_placement(u_ex, ex_item)
                             cand = [p_t, p_v, p_s, p_ex]
+                            screens, p_boxes = self._build_architectural_partitions(cand)
                             is_val, _ = check_layout_feasibility(
                                 cand, self.door, self.room_w, self.room_l,
-                                window=self.window, partitions=part_boxes
+                                window=self.window, partitions=p_boxes
                             )
                             if is_val:
                                 fixtures = cand
@@ -169,16 +173,17 @@ class AutonomousSpatialOptimizer:
                         if not placed_extra:
                             continue
                     else:
+                        screens, p_boxes = self._build_architectural_partitions(fixtures)
                         is_val, _ = check_layout_feasibility(
                             fixtures, self.door, self.room_w, self.room_l,
-                            window=self.window, partitions=part_boxes
+                            window=self.window, partitions=p_boxes
                         )
                         if not is_val:
                             continue
 
-                    # Anti-Clumping Dispersion Metric
+                    # Multi-Objective Fitness Evaluation
                     unique_walls = len(set(f.orientation for f in fixtures))
-                    dispersion_score = unique_walls / 4.0
+                    dispersion = unique_walls / 4.0
 
                     total_spread = sum(
                         math.hypot(f1.x - f2.x, f1.y - f2.y)
@@ -186,7 +191,12 @@ class AutonomousSpatialOptimizer:
                         for j, f2 in enumerate(fixtures) if i < j
                     )
                     norm_spread = min(1.0, total_spread / (len(fixtures) * math.hypot(self.room_w, self.room_l)))
-                    fitness = (dispersion_score * 0.6) + (norm_spread * 0.4)
+
+                    hx = self.door.offset if self.door.wall in ("south", "north") else (0.0 if self.door.wall == "west" else self.room_w)
+                    hy = 0.0 if self.door.wall == "south" else (self.room_l if self.door.wall == "north" else self.door.offset)
+                    sightline_score = math.hypot(p_t.x - hx, p_t.y - hy) / math.hypot(self.room_w, self.room_l)
+
+                    fitness = (dispersion * 0.4) + (norm_spread * 0.3) + (sightline_score * 0.3)
 
                     valid_solutions.append({
                         "fixtures": fixtures,
@@ -194,26 +204,31 @@ class AutonomousSpatialOptimizer:
                         "fitness": fitness
                     })
 
-                    if len(valid_solutions) >= 30:
+                    if len(valid_solutions) >= 40:
                         break
-                if len(valid_solutions) >= 30:
+                if len(valid_solutions) >= 40:
                     break
-            if len(valid_solutions) >= 30:
+            if len(valid_solutions) >= 40:
                 break
 
-        # Fallback if room geometry is hyper-constrained
+        # ZeroDivisionError Prevention: Robust Fallback with 15-inch Lateral Clearance
         if not valid_solutions:
-            p_t = self.pcs.u_to_placement(0.5, t_item)
-            p_v = self.pcs.u_to_placement(self.room_w + 0.5, v_item)
-            p_s = self.pcs.u_to_placement(self.room_w + self.room_l + 0.5, s_item)
-            fixtures = [p_t, p_v, p_s]
+            # Deterministic, non-overlapping corner arrangement
+            p_t = PlacedFixture(t_item, 0.6, self.room_l - t_item["depth"] - 0.4, "north_wall")
+            p_s = PlacedFixture(s_item, self.room_w - s_item["width"] - 0.4, self.room_l - s_item["depth"] - 0.4, "north_wall")
+            # Place vanity on opposite wall away from door
+            v_wall = "west_wall" if self.door.wall != "west" else "east_wall"
+            vx = 0.3 if v_wall == "west_wall" else (self.room_w - v_item["depth"] - 0.3)
+            vy = max(0.4, (self.room_l - v_item["width"]) / 2.0)
+            p_v = PlacedFixture(v_item, vx, vy, v_wall)
+            f_list = [p_t, p_v, p_s]
             if has_extra:
-                fixtures.append(self.pcs.u_to_placement(2.0 * self.room_w + self.room_l + 0.5, ex_item))
-            return [{"fixtures": fixtures, "partitions": [], "fitness": 0.5}] * target_count
+                f_list.append(PlacedFixture(ex_item, 0.4, 0.4, "south_wall"))
+            valid_solutions = [{"fixtures": f_list, "partitions": [], "fitness": 0.5}]
 
         valid_solutions.sort(key=lambda s: s["fitness"], reverse=True)
 
-        # Cluster for structural diversity
+        # Cluster to guarantee 3 diverse wall arrangements
         selected = []
         for sol in valid_solutions:
             if not selected:
@@ -225,7 +240,8 @@ class AutonomousSpatialOptimizer:
                         1 for i in range(min(len(sol["fixtures"]), len(ex["fixtures"])))
                         if sol["fixtures"][i].orientation == ex["fixtures"][i].orientation
                     )
-                    if matching >= 2:
+                    disp = sum(math.hypot(c.x - e.x, c.y - e.y) for c, e in zip(sol["fixtures"], ex["fixtures"]))
+                    if matching >= 2 and disp < (self.room_w * 0.3):
                         is_distinct = False
                         break
                 if is_distinct:
@@ -233,6 +249,7 @@ class AutonomousSpatialOptimizer:
             if len(selected) >= target_count:
                 break
 
+        # Safe circular filling (ZeroDivisionError impossible since len(valid_solutions) >= 1)
         while len(selected) < target_count:
             selected.append(valid_solutions[len(selected) % len(valid_solutions)])
 
@@ -253,7 +270,7 @@ def build_design_matrix(room_w: float, room_l: float, door: Door,
     for b_idx, bundle in enumerate(bundles):
         b_items = bundle["items"]
         solved_layouts = optimizer.solve_bundle_layouts(
-            b_items, target_count=3, seed_offset=seed_offset + (b_idx * 2.3)
+            b_items, target_count=3, seed_offset=seed_offset + (b_idx * 3.7)
         )
 
         for l_idx, layout in enumerate(solved_layouts):

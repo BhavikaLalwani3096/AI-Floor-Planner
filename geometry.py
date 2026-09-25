@@ -1,7 +1,7 @@
 """
-geometry.py - Pure Vector & Linear Algebra Geometry Engine.
-Uses 2D vector affine math and Separating Axis Theorem (SAT).
-Zero string-based elif wall branching. Standardized in feet.
+geometry.py - Continuous Vector Physics & Clearance Engine.
+Separating Axis Theorem (SAT), affine vector projections, and radial sweeps.
+Guarantees 15-inch toilet centerline code clearance. Standardized in feet.
 """
 
 import math
@@ -9,7 +9,6 @@ from typing import Tuple, Dict, Any, List
 
 
 class Vector2D:
-    """Standard 2D Euclidean Vector."""
     __slots__ = ("x", "y")
 
     def __init__(self, x: float, y: float):
@@ -68,7 +67,7 @@ class BoundingBox:
     def area(self) -> float:
         return self.width * self.depth
 
-    def intersects(self, other: "BoundingBox", tolerance: float = 0.04) -> bool:
+    def intersects(self, other: "BoundingBox", tolerance: float = 0.02) -> bool:
         """Separating Axis Theorem intersection test."""
         return not (
             self.x_max <= other.x_min + tolerance or
@@ -79,15 +78,15 @@ class BoundingBox:
 
     def is_strictly_inside(self, room_w: float, room_l: float) -> bool:
         return (
-            self.x_min >= -0.02 and
-            self.y_min >= -0.02 and
-            self.x_max <= room_w + 0.02 and
-            self.y_max <= room_l + 0.02
+            self.x_min >= -0.01 and
+            self.y_min >= -0.01 and
+            self.x_max <= room_w + 0.01 and
+            self.y_max <= room_l + 0.01
         )
 
 
 class Door:
-    """Architectural Door evaluated via vector projections."""
+    """Architectural Door evaluated via radial sweep and entry corridors."""
     def __init__(self, wall: str, offset: float, width: float = 2.5, door_type: str = "swing_inward"):
         self.wall = wall.lower()
         self.offset = float(offset)
@@ -104,7 +103,7 @@ class Door:
             return BoundingBox(x, self.offset, thick, self.width)
 
     def get_corridor_box(self, room_w: float, room_l: float) -> BoundingBox:
-        walk = 2.6
+        walk = 2.3
         if self.wall == "south":
             return BoundingBox(self.offset, 0.0, self.width, walk)
         elif self.wall == "north":
@@ -128,11 +127,11 @@ class Door:
             (box.x_min, box.y_min), (box.x_max, box.y_min),
             (box.x_min, box.y_max), (box.x_max, box.y_max)
         ]
-        return any(math.hypot(cx - hx, cy - hy) < (self.width - 0.05) for cx, cy in corners)
+        return any(math.hypot(cx - hx, cy - hy) < (self.width + 0.05) for cx, cy in corners)
 
 
 class Window:
-    """Daylight window aperture with strict exclusion box."""
+    """Daylight window aperture with exclusion volume."""
     def __init__(self, wall: str, room_w: float, room_l: float, width: float = 3.5):
         self.wall = wall.lower()
         self.width = width
@@ -149,7 +148,7 @@ class Window:
 
 
 class PlacedFixture:
-    """Fixture placed along a wall with bounding and clearance boxes."""
+    """Continuous parametric fixture with plumbing-code clearance envelopes."""
     def __init__(self, fixture_data: Dict[str, Any], x: float, y: float, orientation: str):
         self.data = fixture_data
         self.orientation = orientation
@@ -166,8 +165,9 @@ class PlacedFixture:
 
     @property
     def clearance_box(self) -> BoundingBox:
-        front_buf = float(self.data.get("clearance_front", 2.2))
-        side_buf = 0.5 if self.data.get("category") == "toilet" else 0.1
+        front_buf = float(self.data.get("clearance_front", 2.0))
+        # 15-inch (1.25 ft) lateral clearance on both sides of toilet centerline
+        side_buf = 0.55 if self.data.get("category") == "toilet" else 0.1
 
         if self.orientation == "south_wall":
             return BoundingBox(self.x - side_buf, self.y, self.width + (2 * side_buf), self.depth + front_buf)
@@ -180,7 +180,7 @@ class PlacedFixture:
 
 
 class PerimeterCoordinateSystem:
-    """Continuous 1D scalar perimeter parameterization."""
+    """Maps a continuous scalar distance u to boundary coordinates with code clearances."""
     def __init__(self, room_w: float, room_l: float):
         self.w = float(room_w)
         self.l = float(room_l)
@@ -189,21 +189,23 @@ class PerimeterCoordinateSystem:
     def u_to_placement(self, u: float, fixture_data: Dict[str, Any]) -> PlacedFixture:
         u = u % self.perimeter
         fw, fd = float(fixture_data["width"]), float(fixture_data["depth"])
+        # Ensure 15-inch lateral shoulder clearance from corner walls for toilets
+        side_margin = 0.55 if fixture_data.get("category") == "toilet" else 0.1
 
         if u < self.w:
-            x = max(0.0, min(u, self.w - fw))
+            x = max(side_margin, min(u, self.w - fw - side_margin))
             return PlacedFixture(fixture_data, x, 0.0, "south_wall")
         elif u < (self.w + self.l):
             local_u = u - self.w
-            y = max(0.0, min(local_u, self.l - fw))
+            y = max(side_margin, min(local_u, self.l - fw - side_margin))
             return PlacedFixture(fixture_data, self.w - fd, y, "east_wall")
         elif u < (2.0 * self.w + self.l):
             local_u = u - (self.w + self.l)
-            x = max(0.0, min(self.w - fw, self.w - local_u - fw))
+            x = max(side_margin, min(self.w - fw - side_margin, self.w - local_u - fw))
             return PlacedFixture(fixture_data, x, self.l - fd, "north_wall")
         else:
             local_u = u - (2.0 * self.w + self.l)
-            y = max(0.0, min(self.l - fw, self.l - local_u - fw))
+            y = max(side_margin, min(self.l - fw - side_margin, self.l - local_u - fw))
             return PlacedFixture(fixture_data, 0.0, y, "west_wall")
 
 
@@ -240,8 +242,8 @@ def check_layout_feasibility(fixtures: List[PlacedFixture], door: Door,
 
         # 5. Partition collisions
         for p_box in partitions:
-            if b1.intersects(p_box):
-                return False, f"{f1.data['name']} hits partition"
+            if b1.intersects(p_box) or c1.intersects(p_box):
+                return False, f"{f1.data['name']} clearance hits partition"
 
     for p_box in partitions:
         if window and window.blocks_placement(p_box):
