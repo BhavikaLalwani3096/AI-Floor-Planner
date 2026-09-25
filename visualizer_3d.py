@@ -46,9 +46,12 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
         i=[0, 0], j=[1, 2], k=[2, 3], color="#F1F5F9", name="Porcelain Tile Floor", opacity=1.0
     ))
 
-    # 2. Universal Parametric Outer Cutaway Walls
+    # Universal Parametric Outer Cutaway Walls with Door & Window Openings
+    win_w = 3.5
     for wall_name in ["south", "north", "west", "east"]:
         is_door = (door.wall == wall_name)
+        is_win = (window_wall == wall_name)
+
         if wall_name == "south":
             if is_door:
                 d_s, d_e = door.offset, door.offset + door.width
@@ -56,6 +59,11 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
                     fig.add_traces(_box_mesh(0, 0, 0, d_s, thick, wall_h, "South Wall", wall_color, 0.35))
                 if d_e < room_w - 0.05:
                     fig.add_traces(_box_mesh(d_e, 0, 0, room_w - d_e, thick, wall_h, "South Wall", wall_color, 0.35))
+            elif is_win:
+                wx = (room_w - win_w) / 2.0
+                fig.add_traces(_box_mesh(0, 0, 0, wx, thick, wall_h, "South Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(wx + win_w, 0, 0, room_w - (wx + win_w), thick, wall_h, "South Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(wx, 0, 1.8, win_w, thick, 1.4, "Daylight Window", "#38BDF8", 0.6))
             else:
                 fig.add_traces(_box_mesh(0, 0, 0, room_w, thick, wall_h, "South Wall", wall_color, 0.35))
 
@@ -66,6 +74,11 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
                     fig.add_traces(_box_mesh(0, room_l - thick, 0, d_s, thick, wall_h, "North Wall", wall_color, 0.35))
                 if d_e < room_w - 0.05:
                     fig.add_traces(_box_mesh(d_e, room_l - thick, 0, room_w - d_e, thick, wall_h, "North Wall", wall_color, 0.35))
+            elif is_win:
+                wx = (room_w - win_w) / 2.0
+                fig.add_traces(_box_mesh(0, room_l - thick, 0, wx, thick, wall_h, "North Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(wx + win_w, room_l - thick, 0, room_w - (wx + win_w), thick, wall_h, "North Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(wx, room_l - thick, 1.8, win_w, thick, 1.4, "Daylight Window", "#38BDF8", 0.6))
             else:
                 fig.add_traces(_box_mesh(0, room_l - thick, 0, room_w, thick, wall_h, "North Wall", wall_color, 0.35))
 
@@ -76,6 +89,11 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
                     fig.add_traces(_box_mesh(0, 0, 0, thick, d_s, wall_h, "West Wall", wall_color, 0.35))
                 if d_e < room_l - 0.05:
                     fig.add_traces(_box_mesh(0, d_e, 0, thick, room_l - d_e, wall_h, "West Wall", wall_color, 0.35))
+            elif is_win:
+                wy = (room_l - win_w) / 2.0
+                fig.add_traces(_box_mesh(0, 0, 0, thick, wy, wall_h, "West Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(0, wy + win_w, 0, thick, room_l - (wy + win_w), wall_h, "West Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(0, wy, 1.8, thick, win_w, 1.4, "Daylight Window", "#38BDF8", 0.6))
             else:
                 fig.add_traces(_box_mesh(0, 0, 0, thick, room_l, wall_h, "West Wall", wall_color, 0.35))
 
@@ -86,6 +104,11 @@ def render_3d_bathroom(design_solution: Dict[str, Any],
                     fig.add_traces(_box_mesh(room_w - thick, 0, 0, thick, d_s, wall_h, "East Wall", wall_color, 0.35))
                 if d_e < room_l - 0.05:
                     fig.add_traces(_box_mesh(room_w - thick, d_e, 0, thick, room_l - d_e, wall_h, "East Wall", wall_color, 0.35))
+            elif is_win:
+                wy = (room_l - win_w) / 2.0
+                fig.add_traces(_box_mesh(room_w - thick, 0, 0, thick, wy, wall_h, "East Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(room_w - thick, wy + win_w, 0, thick, room_l - (wy + win_w), wall_h, "East Wall", wall_color, 0.35))
+                fig.add_traces(_box_mesh(room_w - thick, wy, 1.8, thick, win_w, 1.4, "Daylight Window", "#38BDF8", 0.6))
             else:
                 fig.add_traces(_box_mesh(room_w - thick, 0, 0, thick, room_l, wall_h, "East Wall", wall_color, 0.35))
 

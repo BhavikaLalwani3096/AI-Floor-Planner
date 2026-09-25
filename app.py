@@ -84,7 +84,23 @@ with st.sidebar:
         budget_limit = st.number_input("Budget Ceiling (INR)", 100000, 1000000, 350000, 25000)
 
 door = Door(wall=door_wall, offset=door_offset, width=2.5, door_type=door_type)
+if "seed_offset" not in st.session_state:
+    st.session_state.seed_offset = 0.0
 
+with st.sidebar:
+    if st.button("🎲 Generate Fresh Variations", use_container_width=True):
+        st.session_state.seed_offset += 1.8
+
+# Execute Generator Matrix with stochastic seed
+designs = build_design_matrix(
+    room_w=room_w, 
+    room_l=room_l, 
+    door=door, 
+    mode=mode_key, 
+    window_wall=window_wall, 
+    budget_limit=budget_limit,
+    seed_offset=st.session_state.seed_offset
+)
 # Execute Generator Matrix
 designs = build_design_matrix(
     room_w=room_w, room_l=room_l, door=door, 
@@ -137,7 +153,8 @@ if "3D" in canvas_view:
     fig_3d = render_3d_bathroom(active_design, room_w, room_l, door, window_wall=window_wall)
     st.plotly_chart(fig_3d, use_container_width=True, height=680)
 else:
-    fig_2d = render_2d_blueprint(active_design, room_w, room_l, door)
+
+    fig_2d = render_2d_blueprint(active_design, room_w, room_l, door, window_wall=window_wall)
     c_left, c_mid, c_right = st.columns([1, 4, 1])
     with c_mid:
         st.pyplot(fig_2d, use_container_width=True)

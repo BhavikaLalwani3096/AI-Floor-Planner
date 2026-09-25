@@ -1,15 +1,17 @@
 """
-generator.py - Constraint-Satisfaction Spatial Engine & Vector Recommender.
-Solves every layout independently per bundle to guarantee 100% collision-free placement.
+generator.py - Stochastic Non-Clumping Spatial Engine & Vector Recommender.
+Ensures open entry paths, window clearance, room-wide dispersion, and dynamic diversity.
 """
 
 import math
+import random
 import itertools
 from typing import List, Dict, Any, Tuple
 from catalog import CATALOG, cosine_similarity
 from geometry import (
     BoundingBox,
     Door,
+    Window,
     PlacedFixture,
     PerimeterCoordinateSystem,
     check_layout_feasibility
@@ -24,14 +26,13 @@ class AutonomousSpatialOptimizer:
         self.door = door
         self.mode = mode.lower()
         self.window_wall = window_wall.lower()
+        self.window = Window(window_wall, room_w, room_l)
         self.pcs = PerimeterCoordinateSystem(room_w, room_l)
 
-    def _build_structural_partition(self, toilet: PlacedFixture) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
+    def _build_partition(self, toilet: PlacedFixture) -> Tuple[List[Dict[str, Any]], List[BoundingBox]]:
         if self.mode != "privacy_focused":
             return [], []
 
-        screens = []
-        hitboxes = []
         thick = 0.15
         t_box = toilet.bounding_box
         wall = toilet.orientation
@@ -39,104 +40,128 @@ class AutonomousSpatialOptimizer:
         # Build clean nib screen alongside toilet
         if wall == "south_wall":
             screen_x = max(0.2, t_box.x - 0.25)
-            dy = min(t_box.depth + 0.8, self.room_l * 0.4)
+            dy = min(t_box.depth + 0.6, self.room_l * 0.4)
             s_data = {"x": screen_x, "y": 0.0, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
         elif wall == "north_wall":
             screen_x = max(0.2, t_box.x - 0.25)
-            dy = min(t_box.depth + 0.8, self.room_l * 0.4)
+            dy = min(t_box.depth + 0.6, self.room_l * 0.4)
             s_data = {"x": screen_x, "y": self.room_l - dy, "dx": thick, "dy": dy, "dz": 5.5, "name": "WC Divider Wall"}
         elif wall == "west_wall":
             screen_y = max(0.2, t_box.y - 0.25)
-            dx = min(t_box.width + 0.8, self.room_w * 0.4)
+            dx = min(t_box.width + 0.6, self.room_w * 0.4)
             s_data = {"x": 0.0, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
         else:  # east_wall
             screen_y = max(0.2, t_box.y - 0.25)
-            dx = min(t_box.width + 0.8, self.room_w * 0.4)
+            dx = min(t_box.width + 0.6, self.room_w * 0.4)
             s_data = {"x": self.room_w - dx, "y": screen_y, "dx": dx, "dy": thick, "dz": 5.5, "name": "WC Divider Wall"}
 
-        screens.append(s_data)
-        hitboxes.append(BoundingBox(s_data["x"], s_data["y"], s_data["dx"], s_data["dy"]))
-        return screens, hitboxes
+        return [s_data], [BoundingBox(s_data["x"], s_data["y"], s_data["dx"], s_data["dy"])]
 
-    def solve_bundle_layouts(self, items: List[Dict[str, Any]], target_count: int = 3) -> List[Dict[str, Any]]:
-        """
-        Solves 3 structurally distinct, 100% collision-free layouts for THIS EXACT BUNDLE.
-        """
+    def solve_bundle_layouts(self, items: List[Dict[str, Any]], target_count: int = 3, seed_offset: float = 0.0) -> List[Dict[str, Any]]:
         major_items = [i for i in items if i["category"] in ("toilet", "vanity", "shower", "storage", "bathtub")]
-        perimeter = self.pcs.perimeter
-        step = 1.0
-        u_samples = [i * step for i in range(int(perimeter // step))]
-
         t_item = next(i for i in major_items if i["category"] == "toilet")
         v_item = next(i for i in major_items if i["category"] == "vanity")
         s_item = next(i for i in major_items if i["category"] == "shower")
         has_extra = len(major_items) > 3
         ex_item = major_items[3] if has_extra else None
 
+        perimeter = self.pcs.perimeter
+        # Stochastic sampling: apply seed_offset so repeated changes explore fresh coordinates
+        step = 1.4
+        base_samples = [((i * step) + seed_offset) % perimeter for i in range(int(perimeter // step))]
+        random.Random(int(seed_offset * 100)).shuffle(base_samples)
+
         valid_solutions = []
 
-        for u_t in u_samples[::2]:
+        for u_t in base_samples:
             p_t = self.pcs.u_to_placement(u_t, t_item)
-            screens, part_boxes = self._build_structural_partition(p_t)
+            screens, part_boxes = self._build_partition(p_t)
 
-            # Check if partition hits door
-            if any(self.door.collides_with_box(pb, self.room_w, self.room_l) for pb in part_boxes):
-                continue
-
-            for u_v in u_samples[::2]:
-                if abs(u_t - u_v) < 2.5:
+            for u_s in base_samples:
+                if abs(u_s - u_t) < 3.2:
                     continue
-                p_v = self.pcs.u_to_placement(u_v, v_item)
+                p_s = self.pcs.u_to_placement(u_s, s_item)
 
-                for u_s in u_samples[::2]:
-                    if abs(u_s - u_t) < 3.0 or abs(u_s - u_v) < 3.0:
+                for u_v in base_samples:
+                    if abs(u_v - u_t) < 2.5 or abs(u_v - u_s) < 3.0:
                         continue
-                    p_s = self.pcs.u_to_placement(u_s, s_item)
+                    p_v = self.pcs.u_to_placement(u_v, v_item)
+
+                    # Quick rejection if vanity hits window
+                    if self.window.blocks_fixture(p_v):
+                        continue
 
                     fixtures = [p_t, p_v, p_s]
 
                     if has_extra:
-                        # Find valid placement for 4th item (storage / tub)
-                        extra_placed = False
-                        for u_ex in u_samples[::2]:
+                        placed_extra = False
+                        for u_ex in base_samples:
                             if abs(u_ex - u_t) < 2.5 or abs(u_ex - u_v) < 2.5 or abs(u_ex - u_s) < 3.0:
                                 continue
                             p_ex = self.pcs.u_to_placement(u_ex, ex_item)
+                            if self.window.blocks_fixture(p_ex):
+                                continue
+
                             cand = [p_t, p_v, p_s, p_ex]
-                            is_val, _ = check_layout_feasibility(cand, self.door, self.room_w, self.room_l, partitions=part_boxes)
+                            is_val, _ = check_layout_feasibility(
+                                cand, self.door, self.room_w, self.room_l,
+                                window=self.window, partitions=part_boxes
+                            )
                             if is_val:
                                 fixtures = cand
-                                extra_placed = True
+                                placed_extra = True
                                 break
-                        if not extra_placed:
+                        if not placed_extra:
                             continue
                     else:
-                        is_val, _ = check_layout_feasibility(fixtures, self.door, self.room_w, self.room_l, partitions=part_boxes)
+                        is_val, _ = check_layout_feasibility(
+                            fixtures, self.door, self.room_w, self.room_l,
+                            window=self.window, partitions=part_boxes
+                        )
                         if not is_val:
                             continue
 
-                    # Calculate structural score
-                    # 1. Plumbing distance
-                    dist_ts = math.hypot(p_t.x - p_s.x, p_t.y - p_s.y)
-                    plumb_score = max(0.0, 1.0 - (dist_ts / math.hypot(self.room_w, self.room_l)))
+                    # Spatial Balance Metric (Dispersion)
+                    # Penalize grouping all fixtures onto a single wall in large rooms
+                    unique_walls = len(set(f.orientation for f in fixtures))
+                    wall_dispersion_reward = unique_walls / 4.0
+
+                    # Inter-fixture distance spread
+                    total_spread = sum(
+                        math.hypot(f1.x - f2.x, f1.y - f2.y)
+                        for i, f1 in enumerate(fixtures)
+                        for j, f2 in enumerate(fixtures) if i < j
+                    )
+                    norm_spread = min(1.0, total_spread / (len(fixtures) * math.hypot(self.room_w, self.room_l)))
+
+                    fitness = (wall_dispersion_reward * 0.6) + (norm_spread * 0.4)
 
                     valid_solutions.append({
                         "fixtures": fixtures,
                         "partitions": screens,
-                        "score": plumb_score
+                        "fitness": fitness
                     })
 
+                    if len(valid_solutions) >= 30:
+                        break
+                if len(valid_solutions) >= 30:
+                    break
+            if len(valid_solutions) >= 30:
+                break
+
         if not valid_solutions:
-            # Deterministic safe corner fallback
+            # Deterministic spread across non-window walls
             p_t = self.pcs.u_to_placement(0.5, t_item)
             p_v = self.pcs.u_to_placement(self.room_w + 0.5, v_item)
             p_s = self.pcs.u_to_placement(self.room_w + self.room_l + 0.5, s_item)
             f_list = [p_t, p_v, p_s]
             if has_extra:
                 f_list.append(self.pcs.u_to_placement(2.0 * self.room_w + self.room_l + 0.5, ex_item))
-            return [{"fixtures": f_list, "partitions": [], "score": 0.8}] * target_count
+            return [{"fixtures": f_list, "partitions": [], "fitness": 0.5}] * target_count
 
-        # Cluster to guarantee 3 diverse layouts
+        valid_solutions.sort(key=lambda s: s["fitness"], reverse=True)
+
+        # Cluster to guarantee 3 diverse wall arrangements
         selected = []
         for sol in valid_solutions:
             if not selected:
@@ -144,11 +169,11 @@ class AutonomousSpatialOptimizer:
             else:
                 is_distinct = True
                 for ex in selected:
-                    matching_walls = sum(
-                        1 for i in range(len(sol["fixtures"]))
+                    matching = sum(
+                        1 for i in range(min(len(sol["fixtures"]), len(ex["fixtures"])))
                         if sol["fixtures"][i].orientation == ex["fixtures"][i].orientation
                     )
-                    if matching_walls >= 2:
+                    if matching >= 2:
                         is_distinct = False
                         break
                 if is_distinct:
@@ -156,11 +181,8 @@ class AutonomousSpatialOptimizer:
             if len(selected) >= target_count:
                 break
 
-        for sol in valid_solutions:
-            if len(selected) >= target_count:
-                break
-            if sol not in selected:
-                selected.append(sol)
+        while len(selected) < target_count:
+            selected.append(valid_solutions[len(selected) % len(valid_solutions)])
 
         return selected
 
@@ -221,17 +243,19 @@ def vector_bundle_search(budget_limit: float, room_area: float) -> List[Dict[str
 def build_design_matrix(room_w: float, room_l: float, door: Door, 
                         mode: str = "free_flow",
                         window_wall: str = "north",
-                        budget_limit: float = 450000) -> List[Dict[str, Any]]:
+                        budget_limit: float = 450000,
+                        seed_offset: float = 0.0) -> List[Dict[str, Any]]:
     room_area = room_w * room_l
     bundles = vector_bundle_search(budget_limit, room_area)
     optimizer = AutonomousSpatialOptimizer(room_w, room_l, door, mode=mode, window_wall=window_wall)
 
     design_matrix = []
 
-    # SOLVE EACH BUNDLE WITH ITS OWN INDEPENDENT GEOMETRIC PASS
     for b_idx, bundle in enumerate(bundles):
         b_items = bundle["items"]
-        solved_layouts = optimizer.solve_bundle_layouts(b_items, target_count=3)
+        solved_layouts = optimizer.solve_bundle_layouts(
+            b_items, target_count=3, seed_offset=seed_offset + (b_idx * 1.5)
+        )
 
         for l_idx, layout in enumerate(solved_layouts):
             placed_manifest = []
@@ -244,7 +268,6 @@ def build_design_matrix(room_w: float, room_l: float, door: Door,
                     "y": f.y,
                     "wall": f.orientation
                 })
-                # Attach faucet to vanity
                 if f.data["category"] == "vanity":
                     placed_manifest.append({
                         "item": f_prod,
