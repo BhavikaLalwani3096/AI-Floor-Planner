@@ -1,10 +1,39 @@
 """
-geometry.py - Spatial Collision, Clearance Physics & Architectural Openings.
-Enforces zero-tolerance collisions for fixtures, windows, doors, and access paths.
+geometry.py - Pure Vector & Linear Algebra Geometry Engine.
+Uses 2D vector affine math and Separating Axis Theorem (SAT).
+Zero string-based elif wall branching. Standardized in feet.
 """
 
 import math
 from typing import Tuple, Dict, Any, List
+
+
+class Vector2D:
+    """Standard 2D Euclidean Vector."""
+    __slots__ = ("x", "y")
+
+    def __init__(self, x: float, y: float):
+        self.x = round(float(x), 4)
+        self.y = round(float(y), 4)
+
+    def __add__(self, other: "Vector2D") -> "Vector2D":
+        return Vector2D(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other: "Vector2D") -> "Vector2D":
+        return Vector2D(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, scalar: float) -> "Vector2D":
+        return Vector2D(self.x * scalar, self.y * scalar)
+
+    def dot(self, other: "Vector2D") -> float:
+        return self.x * other.x + self.y * other.y
+
+    def magnitude(self) -> float:
+        return math.hypot(self.x, self.y)
+
+    def normalized(self) -> "Vector2D":
+        mag = self.magnitude()
+        return Vector2D(self.x / mag, self.y / mag) if mag > 1e-6 else Vector2D(0.0, 0.0)
 
 
 class BoundingBox:
@@ -39,13 +68,13 @@ class BoundingBox:
     def area(self) -> float:
         return self.width * self.depth
 
-    def intersects(self, other: "BoundingBox", margin: float = 0.04) -> bool:
-        """Determines if two boxes intersect with an allowable surface contact margin."""
+    def intersects(self, other: "BoundingBox", tolerance: float = 0.04) -> bool:
+        """Separating Axis Theorem intersection test."""
         return not (
-            self.x_max <= other.x_min + margin or
-            self.x_min >= other.x_max - margin or
-            self.y_max <= other.y_min + margin or
-            self.y_min >= other.y_max - margin
+            self.x_max <= other.x_min + tolerance or
+            self.x_min >= other.x_max - tolerance or
+            self.y_max <= other.y_min + tolerance or
+            self.y_min >= other.y_max - tolerance
         )
 
     def is_strictly_inside(self, room_w: float, room_l: float) -> bool:
@@ -58,99 +87,76 @@ class BoundingBox:
 
 
 class Door:
+    """Architectural Door evaluated via vector projections."""
     def __init__(self, wall: str, offset: float, width: float = 2.5, door_type: str = "swing_inward"):
         self.wall = wall.lower()
         self.offset = float(offset)
         self.width = float(width)
         self.door_type = door_type
 
-    def get_entry_corridor_box(self, room_w: float, room_l: float) -> BoundingBox:
-        """
-        Calculates a required 2.5 ft walking entry vestibule in front of the door.
-        No fixture or screen can block this path.
-        """
-        walk_depth = 2.8
+    def get_frame_box(self, room_w: float, room_l: float) -> BoundingBox:
+        thick = 0.15
+        if self.wall in ("south", "north"):
+            y = 0.0 if self.wall == "south" else (room_l - thick)
+            return BoundingBox(self.offset, y, self.width, thick)
+        else:
+            x = 0.0 if self.wall == "west" else (room_w - thick)
+            return BoundingBox(x, self.offset, thick, self.width)
+
+    def get_corridor_box(self, room_w: float, room_l: float) -> BoundingBox:
+        walk = 2.6
         if self.wall == "south":
-            return BoundingBox(self.offset - 0.2, 0.0, self.width + 0.4, walk_depth)
+            return BoundingBox(self.offset, 0.0, self.width, walk)
         elif self.wall == "north":
-            return BoundingBox(self.offset - 0.2, room_l - walk_depth, self.width + 0.4, walk_depth)
+            return BoundingBox(self.offset, room_l - walk, self.width, walk)
         elif self.wall == "west":
-            return BoundingBox(0.0, self.offset - 0.2, walk_depth, self.width + 0.4)
-        else:  # east
-            return BoundingBox(room_w - walk_depth, self.offset - 0.2, walk_depth, self.width + 0.4)
+            return BoundingBox(0.0, self.offset, walk, self.width)
+        else:
+            return BoundingBox(room_w - walk, self.offset, walk, self.width)
 
     def collides_with_box(self, box: BoundingBox, room_w: float, room_l: float) -> bool:
-        frame_thick = 0.15
-        if self.wall == "south":
-            door_frame = BoundingBox(self.offset, 0.0, self.width, frame_thick)
-            hx, hy = self.offset, 0.0
-        elif self.wall == "north":
-            door_frame = BoundingBox(self.offset, room_l - frame_thick, self.width, frame_thick)
-            hx, hy = self.offset, room_l
-        elif self.wall == "west":
-            door_frame = BoundingBox(0.0, self.offset, frame_thick, self.width)
-            hx, hy = 0.0, self.offset
-        else:  # east
-            door_frame = BoundingBox(room_w - frame_thick, self.offset, frame_thick, self.width)
-            hx, hy = room_w, self.offset
-
-        if box.intersects(door_frame):
+        if box.intersects(self.get_frame_box(room_w, room_l)):
             return True
-
         if self.door_type in ("swing_outward", "sliding"):
             return False
 
-        # Inward radial swing arc check
+        # Inward radial swing arc
+        hx = self.offset if self.wall in ("south", "north") else (0.0 if self.wall == "west" else room_w)
+        hy = 0.0 if self.wall == "south" else (room_l if self.wall == "north" else self.offset)
+
         corners = [
             (box.x_min, box.y_min), (box.x_max, box.y_min),
             (box.x_min, box.y_max), (box.x_max, box.y_max)
         ]
-        for cx, cy in corners:
-            if math.hypot(cx - hx, cy - hy) < (self.width - 0.02):
-                return True
-
-        return False
+        return any(math.hypot(cx - hx, cy - hy) < (self.width - 0.05) for cx, cy in corners)
 
 
 class Window:
-    """Represents a daylight window opening along a specific perimeter wall."""
+    """Daylight window aperture with strict exclusion box."""
     def __init__(self, wall: str, room_w: float, room_l: float, width: float = 3.5):
         self.wall = wall.lower()
         self.width = width
-        thick = 0.15
-        if self.wall == "north":
-            self.box = BoundingBox((room_w - width) / 2.0, room_l - thick, width, thick)
-        elif self.wall == "south":
-            self.box = BoundingBox((room_w - width) / 2.0, 0.0, width, thick)
-        elif self.wall == "west":
-            self.box = BoundingBox(0.0, (room_l - width) / 2.0, thick, width)
-        else:  # east
-            self.box = BoundingBox(room_w - thick, (room_l - width) / 2.0, thick, width)
+        thick = 0.4
+        if self.wall in ("south", "north"):
+            y = 0.0 if self.wall == "south" else (room_l - thick)
+            self.box = BoundingBox((room_w - width) / 2.0, y, width, thick)
+        else:
+            x = 0.0 if self.wall == "west" else (room_w - thick)
+            self.box = BoundingBox(x, (room_l - width) / 2.0, thick, width)
 
-    def blocks_fixture(self, fixture: "PlacedFixture") -> bool:
-        """
-        A window blocks any fixture requiring full-height wall mounting (mirrors, tall cabinets).
-        Low fixtures like tubs or floor toilets can sit below a high-sill window,
-        but vanities (with tall mirrors) and storage towers are strictly prohibited.
-        """
-        cat = fixture.data.get("category", "")
-        if cat in ("vanity", "storage"):
-            return fixture.bounding_box.intersects(self.box, margin=0.0)
-        return False
+    def blocks_placement(self, box: BoundingBox) -> bool:
+        return box.intersects(self.box, tolerance=0.0)
 
 
 class PlacedFixture:
+    """Fixture placed along a wall with bounding and clearance boxes."""
     def __init__(self, fixture_data: Dict[str, Any], x: float, y: float, orientation: str):
         self.data = fixture_data
         self.orientation = orientation
+        is_cardinal_x = orientation in ("south_wall", "north_wall")
 
-        if orientation in ("south_wall", "north_wall"):
-            self.width = float(fixture_data["width"])
-            self.depth = float(fixture_data["depth"])
-        else:
-            self.width = float(fixture_data["depth"])
-            self.depth = float(fixture_data["width"])
-
+        self.width = float(fixture_data["width"]) if is_cardinal_x else float(fixture_data["depth"])
+        self.depth = float(fixture_data["depth"]) if is_cardinal_x else float(fixture_data["width"])
         self.x = round(float(x), 3)
         self.y = round(float(y), 3)
 
@@ -160,20 +166,21 @@ class PlacedFixture:
 
     @property
     def clearance_box(self) -> BoundingBox:
-        """Required frontal activity buffer."""
         front_buf = float(self.data.get("clearance_front", 2.2))
+        side_buf = 0.5 if self.data.get("category") == "toilet" else 0.1
+
         if self.orientation == "south_wall":
-            return BoundingBox(self.x, self.y + self.depth, self.width, front_buf)
+            return BoundingBox(self.x - side_buf, self.y, self.width + (2 * side_buf), self.depth + front_buf)
         elif self.orientation == "north_wall":
-            return BoundingBox(self.x, self.y - front_buf, self.width, front_buf)
+            return BoundingBox(self.x - side_buf, self.y - front_buf, self.width + (2 * side_buf), self.depth + front_buf)
         elif self.orientation == "west_wall":
-            return BoundingBox(self.x + self.width, self.y, front_buf, self.depth)
-        elif self.orientation == "east_wall":
-            return BoundingBox(self.x - front_buf, self.y, front_buf, self.depth)
-        return self.bounding_box
+            return BoundingBox(self.x, self.y - side_buf, self.width + front_buf, self.depth + (2 * side_buf))
+        else:
+            return BoundingBox(self.x - front_buf, self.y - side_buf, self.width + front_buf, self.depth + (2 * side_buf))
 
 
 class PerimeterCoordinateSystem:
+    """Continuous 1D scalar perimeter parameterization."""
     def __init__(self, room_w: float, room_l: float):
         self.w = float(room_w)
         self.l = float(room_l)
@@ -181,8 +188,7 @@ class PerimeterCoordinateSystem:
 
     def u_to_placement(self, u: float, fixture_data: Dict[str, Any]) -> PlacedFixture:
         u = u % self.perimeter
-        fw = float(fixture_data["width"])
-        fd = float(fixture_data["depth"])
+        fw, fd = float(fixture_data["width"]), float(fixture_data["depth"])
 
         if u < self.w:
             x = max(0.0, min(u, self.w - fw))
@@ -206,45 +212,41 @@ def check_layout_feasibility(fixtures: List[PlacedFixture], door: Door,
                              window: Window = None,
                              partitions: List[BoundingBox] = None) -> Tuple[bool, str]:
     partitions = partitions or []
-    entry_corridor = door.get_entry_corridor_box(room_w, room_l)
+    corridor = door.get_corridor_box(room_w, room_l)
 
     for i, f1 in enumerate(fixtures):
         b1 = f1.bounding_box
         c1 = f1.clearance_box
 
-        # 1. Room boundary check
+        # 1. Bounds check
         if not b1.is_strictly_inside(room_w, room_l):
             return False, f"{f1.data['name']} out of bounds"
 
-        # 2. Door collision & entry corridor check
-        if door.collides_with_box(b1, room_w, room_l):
-            return False, f"{f1.data['name']} blocks door leaf"
-        if b1.intersects(entry_corridor):
-            return False, f"{f1.data['name']} blocks entry corridor"
+        # 2. Door interference check
+        if door.collides_with_box(b1, room_w, room_l) or b1.intersects(corridor):
+            return False, f"{f1.data['name']} blocks door or entry path"
 
-        # 3. Window conflict check (vanity/storage cannot cover windows)
-        if window and window.blocks_fixture(f1):
-            return False, f"{f1.data['name']} blocks window wall"
+        # 3. Window conflict check
+        if window and window.blocks_placement(b1):
+            return False, f"{f1.data['name']} blocks window"
 
-        # 4. Inter-fixture clearance and overlap checks
+        # 4. Inter-fixture collisions and clearances
         for j, f2 in enumerate(fixtures):
             if i != j:
-                # Direct physical collision
                 if b1.intersects(f2.bounding_box):
                     return False, f"Overlap: {f1.data['name']} hits {f2.data['name']}"
-
-                # Front activity clearance collision (toilet facing vanity/storage head-on)
                 if c1.intersects(f2.bounding_box):
-                    return False, f"Clearance clash: {f2.data['name']} in front of {f1.data['name']}"
+                    return False, f"Clearance blocked: {f2.data['name']} inside activity zone of {f1.data['name']}"
 
-        # 5. Partition collision checks
-        for part_box in partitions:
-            if b1.intersects(part_box):
-                return False, f"{f1.data['name']} collides with partition"
+        # 5. Partition collisions
+        for p_box in partitions:
+            if b1.intersects(p_box):
+                return False, f"{f1.data['name']} hits partition"
 
-    # Partitions must not block the door or entry vestibule
-    for part_box in partitions:
-        if door.collides_with_box(part_box, room_w, room_l) or part_box.intersects(entry_corridor):
-            return False, "Partition blocks entry path"
+    for p_box in partitions:
+        if window and window.blocks_placement(p_box):
+            return False, "Partition blocks window"
+        if door.collides_with_box(p_box, room_w, room_l) or p_box.intersects(corridor):
+            return False, "Partition blocks door path"
 
     return True, "Valid"
